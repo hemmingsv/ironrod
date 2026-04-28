@@ -1,0 +1,7 @@
+scriptures.db is the SQLite export of the LDS standard works
+(KJV Bible, Book of Mormon, Doctrine and Covenants, Pearl of Great Price)
+from https://github.com/beandog/lds-scriptures.
+
+The scripture text and structure are in the public domain in the United States.
+The export tooling is also released under a permissive license. See the upstream
+repository for details.

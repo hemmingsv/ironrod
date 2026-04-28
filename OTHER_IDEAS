@@ -1,0 +1,7 @@
+     - Search across scripture text bodies (the upstream API does this; can be added later).
+     - Cross-references / footnotes (not in the SQLite dataset).
+     - Highlighting / annotations (separate feature; bookmarks are the only state today).
+     - Color theming (sticks with terminal defaults).
+     - Concurrent multi-process access to the bookmarks file (single-user assumption — last writer wins).
+     - Wrapping at canon end (user chose: stop).
+     - Persisting line-within-verse offset (user chose: only the verse).

@@ -1,0 +1,36 @@
+[project]
+name = "ironrod"
+version = "0.1.0"
+description = "Terminal scripture reader for the LDS standard works."
+readme = "README.md"
+authors = [
+    { name = "Hemming Svensson", email = "hemmingsvensson@gmail.com" }
+]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "prompt_toolkit>=3.0.43",
+    "pydantic>=2.6",
+    "fire>=0.6",
+]
+
+[project.scripts]
+ironrod = "ironrod.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "ironrod"
+module-root = "src"
+source-include = ["src/ironrod/data/scriptures.db", "src/ironrod/data/ATTRIBUTION.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+addopts = "-q"
