@@ -10,7 +10,8 @@ verified InMemoryBookmarkJournal. Assertions cover:
 * ``g`` opens goto, typing ``1 ne 3`` selects 1 Nephi 3, Enter jumps there
 * ``:`` then a number jumps to that verse in the current chapter
 * ``b`` opens the switcher, selecting another bookmark moves it to top
-* ``n`` from the switcher creates a new bookmark at Gen 1:1
+* ``c`` from the switcher creates a new bookmark at Gen 1:1
+* ``j``/``k`` navigate the switcher; ``PgDn``/``PgUp`` page the study view
 """
 
 from __future__ import annotations
@@ -80,6 +81,40 @@ def test_j_advances_cursor_and_persists(app: App) -> None:
 def test_k_at_canon_start_is_noop(app: App) -> None:
     # We're at Gen 1:1 with offset 0.
     app.on_key("k")
+    assert app.study.top_ref == INITIAL_REF
+    assert app.study.top_line_offset == 0
+
+
+def test_pagedown_advances_body_minus_overlap(db: ScriptureDB, app: App) -> None:
+    # body_height = 20 - 3 = 17, PAGE_OVERLAP = 3, so a page advances 14
+    # verse-line steps. Compare against repeated `j` from the same starting
+    # position; well clear of the canon edges.
+    nephi = _book_id(db, "1 Nephi")
+    start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
+    app.study.top_ref = start
+    app.study.top_line_offset = 0
+    app.on_key("pagedown")
+    after_page = (app.study.top_ref, app.study.top_line_offset)
+    app.study.top_ref = start
+    app.study.top_line_offset = 0
+    for _ in range(app.body_height - 3):
+        app.on_key("j")
+    assert after_page == (app.study.top_ref, app.study.top_line_offset)
+
+
+def test_pageup_round_trips_with_pagedown(db: ScriptureDB, app: App) -> None:
+    nephi = _book_id(db, "1 Nephi")
+    start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
+    app.study.top_ref = start
+    app.study.top_line_offset = 0
+    app.on_key("pagedown")
+    app.on_key("pageup")
+    assert app.study.top_ref == start
+    assert app.study.top_line_offset == 0
+
+
+def test_pageup_at_canon_start_is_noop(app: App) -> None:
+    app.on_key("pageup")
     assert app.study.top_ref == INITIAL_REF
     assert app.study.top_line_offset == 0
 
@@ -195,7 +230,7 @@ def test_switcher_select_other_moves_to_top(app: App, db: ScriptureDB) -> None:
 
 def test_switcher_creates_new_at_gen_1_1(app: App) -> None:
     app.on_key("b")
-    app.on_key("n")
+    app.on_key("c")
     assert app.screen == "newbookmark"
     for ch in "evening":
         app.on_key(ch)
@@ -205,9 +240,37 @@ def test_switcher_creates_new_at_gen_1_1(app: App) -> None:
     assert app.bookmark.reference == INITIAL_REF
 
 
-def test_switcher_new_empty_name_shows_error(app: App) -> None:
+def test_switcher_n_does_not_create_new(app: App) -> None:
+    # ``n`` used to mean "new"; it must no longer trigger create.
     app.on_key("b")
     app.on_key("n")
+    assert app.screen == "switcher"
+
+
+def test_switcher_n_still_cancels_delete(app: App) -> None:
+    app.journal.create("Evening", Reference(book_id=1, chapter_number=2, verse_number=1))
+    app.on_key("b")
+    app.on_key("d")
+    assert app.switcher.confirming_delete is True
+    app.on_key("n")
+    assert app.switcher.confirming_delete is False
+    # Bookmarks unchanged.
+    assert len(app.journal.load()) == 2
+
+
+def test_switcher_j_k_navigate_selection(app: App) -> None:
+    app.journal.create("Evening", Reference(book_id=1, chapter_number=2, verse_number=1))
+    app.on_key("b")
+    assert app.switcher.selected == 0
+    app.on_key("j")
+    assert app.switcher.selected == 1
+    app.on_key("k")
+    assert app.switcher.selected == 0
+
+
+def test_switcher_new_empty_name_shows_error(app: App) -> None:
+    app.on_key("b")
+    app.on_key("c")
     app.on_key("enter")
     assert app.screen == "newbookmark"
     assert app.newbookmark.error == "name cannot be empty"
@@ -215,7 +278,7 @@ def test_switcher_new_empty_name_shows_error(app: App) -> None:
 
 def test_switcher_new_duplicate_name_shows_error(app: App) -> None:
     app.on_key("b")
-    app.on_key("n")
+    app.on_key("c")
     for ch in "my-study":
         app.on_key(ch)
     app.on_key("enter")

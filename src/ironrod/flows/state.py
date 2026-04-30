@@ -29,6 +29,7 @@ INITIAL_REF = Reference(book_id=1, chapter_number=1, verse_number=1)
 HEADER_LINES = 1
 FOOTER_LINES = 2
 CHROME_LINES = HEADER_LINES + FOOTER_LINES
+PAGE_OVERLAP = 3
 
 
 Mode = Literal["normal", "verse-jump"]
@@ -154,7 +155,7 @@ class App:
         if self.study.mode == "verse-jump":
             footer = f":{self.study.verse_jump_buf}_   (Enter to jump, Esc to cancel)"
         else:
-            footer = "j/↓ down  k/↑ prev  : verse  g goto  b bookmarks  q quit"
+            footer = "j/↓ down  k/↑ prev  PgDn/PgUp page  : verse  g goto  b bookmarks  q quit"
         if self.flash:
             footer = f"{self.flash}"
         return self._pad_to_height([header, *body_lines, sep, footer])
@@ -198,14 +199,14 @@ class App:
             namecol = bm.name[:24].ljust(24)
             list_lines.append(f"  {cursor} {namecol}  {location}")
         if not bookmarks:
-            list_lines = ["  (no bookmarks — press n to create)"]
+            list_lines = ["  (no bookmarks — press c to create)"]
         if len(list_lines) < self.body_height:
             list_lines += [""] * (self.body_height - len(list_lines))
         sep = "─" * self.width
         if self.switcher.confirming_delete:
             footer = "Delete this bookmark? (y/n)"
         else:
-            footer = "Enter switch  n new  d delete  Esc back"
+            footer = "Enter switch  c create  j/k select  d delete  Esc back"
         return self._pad_to_height([header, *list_lines, sep, footer])
 
     def _render_newbookmark(self) -> list[str]:
@@ -247,6 +248,10 @@ class App:
             self._scroll_down_one()
         elif key in ("k", "up"):
             self._scroll_up_one()
+        elif key == "pagedown":
+            self._scroll_down_page()
+        elif key == "pageup":
+            self._scroll_up_page()
         elif key == "g":
             self.screen = "goto"
             self.goto = GotoState()
@@ -321,6 +326,24 @@ class App:
         else:
             self.study.top_line_offset = new_offset
 
+    def _scroll_down_page(self) -> None:
+        # Overlap by PAGE_OVERLAP rows so the bottom of the previous screen
+        # reappears at the top of the new one.
+        steps = max(1, self.body_height - PAGE_OVERLAP)
+        for _ in range(steps):
+            before = (self.study.top_ref, self.study.top_line_offset)
+            self._scroll_down_one()
+            if (self.study.top_ref, self.study.top_line_offset) == before:
+                break
+
+    def _scroll_up_page(self) -> None:
+        steps = max(1, self.body_height - PAGE_OVERLAP)
+        for _ in range(steps):
+            before = (self.study.top_ref, self.study.top_line_offset)
+            self._scroll_up_one()
+            if (self.study.top_ref, self.study.top_line_offset) == before:
+                break
+
     def _set_top(self, ref: Reference) -> None:
         """Set top_ref to a new verse with offset 0. Persists to journal."""
         self._set_top_with_offset(ref, 0)
@@ -388,7 +411,7 @@ class App:
         if key == "escape":
             self.screen = "study"
             return
-        if key == "n":
+        if key == "c":
             self.screen = "newbookmark"
             self.newbookmark = NewBookmarkState()
             return
@@ -396,10 +419,10 @@ class App:
             if bookmarks:
                 self.switcher.confirming_delete = True
             return
-        if key == "up":
+        if key in ("up", "k"):
             self.switcher.selected = max(0, self.switcher.selected - 1)
             return
-        if key == "down":
+        if key in ("down", "j"):
             self.switcher.selected = min(max(0, len(bookmarks) - 1), self.switcher.selected + 1)
             return
         if key == "enter":
