@@ -22,7 +22,7 @@ from ironrod.clients.bookmarks import (
 from ironrod.clients.scriptures import ScriptureDB
 from ironrod.core.fuzzy import score
 from ironrod.core.layout import lay_out, scroll_down, scroll_up
-from ironrod.models import Bookmark, ChapterEntry, Reference
+from ironrod.models import Bookmark, ChapterEntry, HistoryRecord, Reference
 
 DEFAULT_NAME = "my-study"
 INITIAL_REF = Reference(book_id=1, chapter_number=1, verse_number=1)
@@ -31,7 +31,7 @@ FOOTER_LINES = 2
 CHROME_LINES = HEADER_LINES + FOOTER_LINES
 
 
-Mode = Literal["normal", "verse-jump"]
+Mode = Literal["normal", "verse-jump", "history"]
 Screen = Literal["study", "goto", "switcher", "newbookmark"]
 
 
@@ -44,12 +44,23 @@ class JournalProto(Protocol):
     def delete(self, slug: str) -> None: ...
 
 
+class HistoryProto(Protocol):
+    def load(self) -> list[HistoryRecord]: ...
+    def load_for(self, slug: str) -> list[HistoryRecord]: ...
+    def append(self, slug: str, reference: Reference) -> bool: ...
+
+
 @dataclass
 class StudyState:
     top_ref: Reference
     top_line_offset: int = 0
     mode: Mode = "normal"
     verse_jump_buf: str = ""
+    # Snapshot of the bookmark's history captured on entering history mode.
+    # ``None`` iff ``mode != "history"``. Snapshotting (rather than re-reading
+    # on each step) keeps the index stable if anything else appends mid-walk.
+    history_view: list[HistoryRecord] | None = None
+    history_index: int = 0
 
 
 @dataclass
@@ -74,6 +85,7 @@ class NewBookmarkState:
 class App:
     db: ScriptureDB
     journal: JournalProto
+    history: HistoryProto
 
     width: int = 80
     height: int = 24
@@ -91,6 +103,7 @@ class App:
         existing = self.journal.top()
         if existing is None:
             self.bookmark = self.journal.create(DEFAULT_NAME, INITIAL_REF)
+            self.history.append(self.bookmark.slug, self.bookmark.reference)
         else:
             self.bookmark = existing
         self.study = StudyState(top_ref=self.bookmark.reference, top_line_offset=0)
@@ -137,7 +150,11 @@ class App:
         return lines + [""] * (self.height - len(lines))
 
     def _render_study(self) -> list[str]:
-        header = f"{self.bookmark.name} — {self._ref_long_label(self.study.top_ref)}"
+        suffix = " [history]" if self.study.mode == "history" else ""
+        header = (
+            f"{self.bookmark.name}{suffix} — "
+            f"{self._ref_long_label(self.study.top_ref)}"
+        )
         body = lay_out(
             self.study.top_ref,
             self.study.top_line_offset,
@@ -153,8 +170,15 @@ class App:
         sep = "─" * self.width
         if self.study.mode == "verse-jump":
             footer = f":{self.study.verse_jump_buf}_   (Enter to jump, Esc to cancel)"
+        elif self.study.mode == "history" and self.study.history_view is not None:
+            total = len(self.study.history_view)
+            pos = self.study.history_index + 1
+            footer = f"← {pos}/{total} →   Enter settle  Esc cancel"
         else:
-            footer = "j/↓ down  k/↑ prev  : verse  g goto  b bookmarks  q quit"
+            footer = (
+                "j/↓ down  k/↑ prev  ←/→ history  : verse  "
+                "g goto  b bookmarks  q quit"
+            )
         if self.flash:
             footer = f"{self.flash}"
         return self._pad_to_height([header, *body_lines, sep, footer])
@@ -243,10 +267,24 @@ class App:
         if self.study.mode == "verse-jump":
             self._on_key_study_verse_jump(key)
             return
+        if self.study.mode == "history":
+            self._on_key_study_history(key)
+            return
+        # normal mode
         if key in ("j", "down"):
             self._scroll_down_one()
         elif key in ("k", "up"):
             self._scroll_up_one()
+        elif key in ("left", "h"):
+            self._enter_history_mode()
+        elif key in ("right", "l"):
+            # No-op: there is nothing forward of the newest record.
+            return
+        elif key == "enter":
+            # Append current HEAD to history (deduped). Implemented as enter +
+            # immediate exit of history mode so commit-on-transition remains
+            # the single primitive — no other side-effects.
+            self._commit_history()
         elif key == "g":
             self.screen = "goto"
             self.goto = GotoState()
@@ -258,6 +296,60 @@ class App:
         elif key == ":":
             self.study.mode = "verse-jump"
             self.study.verse_jump_buf = ""
+
+    # History mode
+
+    def _commit_history(self, ref: Reference | None = None) -> bool:
+        """Append the given (or current HEAD) reference to the bookmark's
+        history. Returns True if a new record was actually written, False if
+        deduplicated against the most recent existing record.
+        """
+        target = ref if ref is not None else self.study.top_ref
+        return self.history.append(self.bookmark.slug, target)
+
+    def _enter_history_mode(self) -> None:
+        """Commit current HEAD, snapshot history, step back by one."""
+        self._commit_history()
+        snapshot = self.history.load_for(self.bookmark.slug)
+        if len(snapshot) < 2:
+            self.flash = "no earlier history"
+            return
+        self.study.history_view = snapshot
+        self.study.history_index = len(snapshot) - 2
+        self._set_top(snapshot[self.study.history_index].reference)
+        self.study.mode = "history"
+
+    def _exit_history_mode(self, *, commit: bool) -> None:
+        if commit:
+            self._commit_history()
+        self.study.mode = "normal"
+        self.study.history_view = None
+        self.study.history_index = 0
+
+    def _on_key_study_history(self, key: str) -> None:
+        view = self.study.history_view
+        if view is None:  # pragma: no cover — invariant
+            self.study.mode = "normal"
+            return
+        if key in ("left", "h"):
+            self.study.history_index = max(0, self.study.history_index - 1)
+            self._set_top(view[self.study.history_index].reference)
+            return
+        if key in ("right", "l"):
+            self.study.history_index = min(len(view) - 1, self.study.history_index + 1)
+            self._set_top(view[self.study.history_index].reference)
+            return
+        if key == "enter":
+            self._exit_history_mode(commit=True)
+            return
+        if key == "escape":
+            self._exit_history_mode(commit=False)
+            return
+        # Any other key: leave history mode (committing the walked-to position),
+        # then fall through to normal study handling so the keystroke still does
+        # what the user expects (scroll, open goto, etc.).
+        self._exit_history_mode(commit=True)
+        self._on_key_study(key)
 
     def _on_key_study_verse_jump(self, key: str) -> None:
         if key == "escape":
@@ -282,7 +374,11 @@ class App:
                     chapter_number=ch,
                     verse_number=verse_num,
                 )
+                # Commit source HEAD (where the user is now), then jump and
+                # commit the destination too.
+                self._commit_history()
                 self._set_top(new_ref)
+                self._commit_history(new_ref)
             else:
                 self.flash = f"verse {verse_num} not in {self._ref_long_label(self.study.top_ref).rsplit(':', 1)[0]}"
             return
@@ -348,7 +444,10 @@ class App:
                 verse_number=1,
             )
             self.screen = "study"
+            # Commit source HEAD before jumping, then the destination.
+            self._commit_history()
             self._set_top(target)
+            self._commit_history(target)
             return
         if key in ("up",):
             self.goto.selected = max(0, self.goto.selected - 1)
@@ -436,6 +535,9 @@ class App:
             self.bookmark = bm
             self.study = StudyState(top_ref=bm.reference)
             self.screen = "study"
+            # Seed the new bookmark's history with its initial position so that
+            # ←/→ have something to walk to from day one.
+            self.history.append(bm.slug, bm.reference)
             return
         if len(key) == 1 and key.isprintable():
             self.newbookmark.name_buf += key

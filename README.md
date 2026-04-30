@@ -34,8 +34,20 @@ uvx --from . ironrod
 - Press `g` to fuzzy-find any chapter (`1 Ne 3` matches `1 Nephi 3`).
 - Press `:` then a number to jump to a verse in the current chapter
   (e.g. `:7` Enter).
+- Press `Enter` in the study screen to append your current position to the
+  navigation history (deduplicated against the most recent entry).
+- Press `←` / `h` to walk back through the history and `→` / `l` to walk
+  forward. The footer shows `← N/M →` while you are walking. Press `Enter` to
+  settle (appending the walked-to position with dedup) or `Esc` to cancel and
+  return to where you were before walking. Scrolling also settles. Goto and
+  verse jumps append to history automatically; plain scrolling does not.
 - Press `b` to switch between bookmarks (most-recently-used on top). Press
-  `n` from the switcher to create a new one.
+  `n` from the switcher to create a new one — the new bookmark's birthplace is
+  written as its first history entry, so `←` can always walk back to where the
+  bookmark started. Switching bookmarks itself does not append to history (the
+  current head of each bookmark is already saved in `bookmarks.jsonl`). History
+  is per-bookmark and lives in `~/.ironrod/history.jsonl` — delete the file any
+  time to clear it.
 - Press `q` to quit. Reopening puts you back exactly where you were.
 
 ## Data
