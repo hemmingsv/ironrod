@@ -365,12 +365,16 @@ class App:
             buf = self.study.verse_jump_buf
             self.study.mode = "normal"
             self.study.verse_jump_buf = ""
-            if not buf.isdigit():
+            if not (buf.lstrip("-").isdigit() and buf != "-"):
                 return
-            verse_num = int(buf)
+            n = int(buf)
+            if n == 0:
+                return
             ch = self.study.top_ref.chapter_number
             book_id = self.study.top_ref.book_id
-            if 1 <= verse_num <= self.db.verse_count(book_id, ch):
+            count = self.db.verse_count(book_id, ch)
+            verse_num = count + n + 1 if n < 0 else n
+            if 1 <= verse_num <= count:
                 new_ref = Reference(
                     book_id=book_id,
                     chapter_number=ch,
@@ -382,7 +386,12 @@ class App:
                 self._set_top(new_ref)
                 self._commit_history(new_ref)
             else:
-                self.flash = f"verse {verse_num} not in {self._ref_long_label(self.study.top_ref).rsplit(':', 1)[0]}"
+                chapter_label = self._ref_long_label(self.study.top_ref).rsplit(":", 1)[0]
+                hint = " (try -1 for last verse)" if n > 0 else ""
+                self.flash = f"verse {n} not in {chapter_label}{hint}"
+            return
+        if key == "-" and self.study.verse_jump_buf == "":
+            self.study.verse_jump_buf = "-"
             return
         if len(key) == 1 and key.isdigit():
             self.study.verse_jump_buf += key

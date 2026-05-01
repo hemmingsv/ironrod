@@ -182,6 +182,61 @@ def test_verse_jump_escape_cancels(app: App) -> None:
     assert app.study.top_ref == INITIAL_REF
 
 
+def test_verse_jump_negative_last(app: App) -> None:
+    # Genesis 1 has 31 verses; :-1 jumps to the last.
+    app.on_key(":")
+    app.on_key("-")
+    app.on_key("1")
+    app.on_key("enter")
+    assert app.study.top_ref.verse_number == 31
+    assert app.study.top_ref.chapter_number == 1
+
+
+def test_verse_jump_negative_second_to_last(app: App) -> None:
+    app.on_key(":")
+    for k in "-2":
+        app.on_key(k)
+    app.on_key("enter")
+    assert app.study.top_ref.verse_number == 30
+    assert app.study.top_ref.chapter_number == 1
+
+
+def test_verse_jump_negative_out_of_range_is_flash_only(app: App) -> None:
+    app.on_key(":")
+    for k in "-999":
+        app.on_key(k)
+    app.on_key("enter")
+    assert app.study.top_ref == INITIAL_REF
+    assert app.flash and "verse -999" in app.flash
+
+
+def test_verse_jump_positive_out_of_range_hints_negative(app: App) -> None:
+    app.on_key(":")
+    for k in "999":
+        app.on_key(k)
+    app.on_key("enter")
+    assert app.study.top_ref == INITIAL_REF
+    assert app.flash and "try -1" in app.flash
+
+
+def test_verse_jump_bare_minus_is_noop(app: App) -> None:
+    app.on_key(":")
+    app.on_key("-")
+    assert app.study.verse_jump_buf == "-"
+    app.on_key("enter")
+    assert app.study.mode == "normal"
+    assert app.study.top_ref == INITIAL_REF
+    assert app.flash is None
+
+
+def test_verse_jump_minus_only_allowed_at_start(app: App) -> None:
+    # Once digits are entered, a stray '-' is ignored, not appended.
+    app.on_key(":")
+    app.on_key("1")
+    app.on_key("-")
+    assert app.study.verse_jump_buf == "1"
+
+
 # goto
 
 def test_goto_filters_by_query(app: App) -> None:
