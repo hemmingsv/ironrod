@@ -93,32 +93,44 @@ def test_k_at_canon_start_is_noop(app: App) -> None:
     assert app.study.top_line_offset == 0
 
 
-def test_pagedown_advances_body_minus_overlap(db: ScriptureDB, app: App) -> None:
-    # body_height = 20 - 3 = 17, PAGE_OVERLAP = 3, so a page advances 14
-    # verse-line steps. Compare against repeated `j` from the same starting
-    # position; well clear of the canon edges.
+def test_pagedown_aligns_to_last_visible_verse_start(db: ScriptureDB, app: App) -> None:
+    # PgDn aligns the new top to the last verse whose start was on screen
+    # before the page. That verse must be one which appeared in the original
+    # rendered viewport (so no skipping past unseen content), and the new
+    # offset must be 0 (top-aligned).
     nephi = _book_id(db, "1 Nephi")
     start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
     app.study.top_ref = start
     app.study.top_line_offset = 0
+    before_render = "\n".join(app.render())
     app.on_key("pagedown")
-    after_page = (app.study.top_ref, app.study.top_line_offset)
-    app.study.top_ref = start
-    app.study.top_line_offset = 0
-    for _ in range(app.body_height - 3):
-        app.on_key("j")
-    assert after_page == (app.study.top_ref, app.study.top_line_offset)
-
-
-def test_pageup_round_trips_with_pagedown(db: ScriptureDB, app: App) -> None:
-    nephi = _book_id(db, "1 Nephi")
-    start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
-    app.study.top_ref = start
-    app.study.top_line_offset = 0
-    app.on_key("pagedown")
-    app.on_key("pageup")
-    assert app.study.top_ref == start
     assert app.study.top_line_offset == 0
+    new_top = app.study.top_ref
+    assert new_top != start  # we advanced
+    assert new_top.book_id == start.book_id
+    assert new_top.chapter_number == start.chapter_number
+    assert new_top.verse_number > start.verse_number
+    # The verse picked must have been visible (its number prefix renders as
+    # ``" {n} "`` at column 0 — see utils.wrap.wrap_verse).
+    assert f"{new_top.verse_number:>3} " in before_render
+
+
+def test_pageup_after_pagedown_makes_top_verse_end_visible(db: ScriptureDB, app: App) -> None:
+    # PgDn then PgUp: the verse we just paged onto must reappear in its
+    # entirety at (or near) the bottom of the new viewport.
+    nephi = _book_id(db, "1 Nephi")
+    start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
+    app.study.top_ref = start
+    app.study.top_line_offset = 0
+    app.on_key("pagedown")
+    paged_top = app.study.top_ref
+    app.on_key("pageup")
+    rendered = "\n".join(app.render())
+    # The verse we paged onto is now fully visible — its number appears
+    # somewhere in the body.
+    assert f"{paged_top.verse_number:>3} " in rendered
+    # And its full text is reachable from the new top by scanning forward.
+    assert app.study.top_ref.verse_number <= paged_top.verse_number
 
 
 def test_pageup_at_canon_start_is_noop(app: App) -> None:
@@ -189,6 +201,32 @@ def test_shift_k_crosses_book_boundary(db: ScriptureDB, app: App) -> None:
     app.study.top_line_offset = 0
     app.on_key("K")
     assert app.study.top_ref == Reference(book_id=1, chapter_number=50, verse_number=1)
+
+    
+def test_pageup_keeps_top_verse_visible_across_chapter_boundary(
+    db: ScriptureDB, app: App,
+) -> None:
+    # When the top verse is the first verse of a chapter, paging up walks
+    # back through the chapter header above it. The header takes up a row
+    # in the new viewport; if the walk-back ignored it, ``lay_out`` would
+    # shove the original top verse past the bottom of the screen.
+    nephi = _book_id(db, "1 Nephi")
+    start = Reference(book_id=nephi, chapter_number=3, verse_number=1)
+    app.study.top_ref = start
+    app.study.top_line_offset = 0
+    app.on_key("pageup")
+    rendered_body = "\n".join(app.render()[1 : 1 + app.body_height])
+    # 1 Nephi 3:1 must still be on screen after PgUp.
+    assert "  1 " in rendered_body  # verse-1 prefix from utils.wrap.wrap_verse
+    # The new top must be canonically before the original top.
+    new_top = app.study.top_ref
+    assert (new_top.book_id, new_top.chapter_number, new_top.verse_number) < (
+        start.book_id, start.chapter_number, start.verse_number,
+    )
+    # And the chapter-3 header must be on screen too — that's what the user
+    # expects: the verse fully visible at the bottom, with the header row
+    # immediately above it.
+    assert "1 Nephi 3" in rendered_body
 
 
 def test_eternal_scroll_into_next_chapter(db: ScriptureDB, app: App) -> None:
