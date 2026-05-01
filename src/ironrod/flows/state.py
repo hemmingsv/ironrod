@@ -175,7 +175,7 @@ class App:
             pos = self.study.history_index + 1
             footer = f"← {pos}/{total} →   Enter settle  Esc cancel"
         else:
-            footer = "j/↓/PgDn down  k/↑/PgUp up  ←/→ history  : verse  g goto  b bookmarks  q quit"
+            footer = "j/↓/PgDn down  k/↑/PgUp up  J/K chapter  ←/→ history  : verse  g goto  b bookmarks  q quit"
         if self.flash:
             footer = f"{self.flash}"
         return self._pad_to_height([header, *body_lines, sep, footer])
@@ -272,6 +272,10 @@ class App:
             self._scroll_down_one()
         elif key in ("k", "up"):
             self._scroll_up_one()
+        elif key == "J":
+            self._jump_next_chapter()
+        elif key == "K":
+            self._jump_prev_chapter_or_verse_one()
         elif key == "pagedown":
             self._scroll_down_page()
         elif key == "pageup":
@@ -426,6 +430,27 @@ class App:
             self._set_top_with_offset(new_top, new_offset)
         else:
             self.study.top_line_offset = new_offset
+
+    def _jump_next_chapter(self) -> None:
+        target = self.db.next_chapter_start(self.study.top_ref)
+        if target is not None:
+            self._set_top(target)
+
+    def _jump_prev_chapter_or_verse_one(self) -> None:
+        # If past verse 1, K snaps to v1 of the current chapter first; only a
+        # second K (now at v1) crosses the chapter boundary.
+        if self.study.top_ref.verse_number > 1:
+            self._set_top(
+                Reference(
+                    book_id=self.study.top_ref.book_id,
+                    chapter_number=self.study.top_ref.chapter_number,
+                    verse_number=1,
+                )
+            )
+            return
+        target = self.db.prev_chapter_start(self.study.top_ref)
+        if target is not None:
+            self._set_top(target)
 
     def _scroll_down_page(self) -> None:
         result = page_down(
