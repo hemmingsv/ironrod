@@ -15,6 +15,10 @@ from ironrod.core.navigation import (
     prev_reference,
     verse_distance,
     verse_position,
+    next_chapter_start,
+    next_reference,
+    prev_chapter_start,
+    prev_reference,
 )
 from ironrod.models import Reference
 
@@ -150,6 +154,48 @@ def test_verse_distance_signed() -> None:
 def test_verse_distance_across_books() -> None:
     # Gen-style canon: from book 1 ch 1 v 1 to book 3 ch 2 v 1 is 8 steps.
     assert verse_distance(ref(1, 1, 1), ref(3, 2, 1), **KW) == 8
+
+    
+CHAPTER_KW = {
+    "book_order": BOOK_ORDER,
+    "chapter_count_by_book": CHAPTER_COUNT_BY_BOOK,
+}
+
+
+# next_chapter_start
+
+def test_next_chapter_start_within_book() -> None:
+    assert next_chapter_start(ref(1, 1, 1), **CHAPTER_KW) == ref(1, 2, 1)
+    # Verse position within the chapter doesn't matter.
+    assert next_chapter_start(ref(1, 1, 3), **CHAPTER_KW) == ref(1, 2, 1)
+
+
+def test_next_chapter_start_crosses_book() -> None:
+    # Last chapter of book 1 → ch1 of book 2.
+    assert next_chapter_start(ref(1, 2, 1), **CHAPTER_KW) == ref(2, 1, 1)
+    assert next_chapter_start(ref(1, 2, 2), **CHAPTER_KW) == ref(2, 1, 1)
+
+
+def test_next_chapter_start_at_canon_end_returns_none() -> None:
+    assert next_chapter_start(ref(3, 2, 1), **CHAPTER_KW) is None
+
+
+# prev_chapter_start
+
+def test_prev_chapter_start_within_book() -> None:
+    assert prev_chapter_start(ref(1, 2, 1), **CHAPTER_KW) == ref(1, 1, 1)
+    assert prev_chapter_start(ref(1, 2, 2), **CHAPTER_KW) == ref(1, 1, 1)
+
+
+def test_prev_chapter_start_crosses_book() -> None:
+    # First chapter of book 2 → last chapter of book 1, but at verse 1.
+    assert prev_chapter_start(ref(2, 1, 1), **CHAPTER_KW) == ref(1, 2, 1)
+    assert prev_chapter_start(ref(3, 1, 1), **CHAPTER_KW) == ref(2, 1, 1)
+
+
+def test_prev_chapter_start_at_canon_start_returns_none() -> None:
+    assert prev_chapter_start(ref(1, 1, 1), **CHAPTER_KW) is None
+    assert prev_chapter_start(ref(1, 1, 3), **CHAPTER_KW) is None
 
 
 def test_full_forward_walk_visits_every_verse() -> None:

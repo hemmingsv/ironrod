@@ -127,3 +127,59 @@ def prev_reference(
         )
 
     return None
+
+
+def next_chapter_start(
+    ref: Reference,
+    *,
+    book_order: Sequence[int],
+    chapter_count_by_book: ChapterCount,
+) -> Reference | None:
+    """Return verse 1 of the chapter immediately after ``ref``'s chapter.
+
+    Returns ``None`` if ``ref`` is in the final chapter of the canon.
+    """
+    last_chapter = chapter_count_by_book[ref.book_id]
+    if ref.chapter_number < last_chapter:
+        return Reference(
+            book_id=ref.book_id,
+            chapter_number=ref.chapter_number + 1,
+            verse_number=1,
+        )
+
+    book_index = book_order.index(ref.book_id)
+    if book_index + 1 < len(book_order):
+        next_book = book_order[book_index + 1]
+        return Reference(book_id=next_book, chapter_number=1, verse_number=1)
+
+    return None
+
+
+def prev_chapter_start(
+    ref: Reference,
+    *,
+    book_order: Sequence[int],
+    chapter_count_by_book: ChapterCount,
+) -> Reference | None:
+    """Return verse 1 of the chapter immediately before ``ref``'s chapter.
+
+    Returns ``None`` if ``ref`` is in the first chapter of the canon.
+    """
+    if ref.chapter_number > 1:
+        return Reference(
+            book_id=ref.book_id,
+            chapter_number=ref.chapter_number - 1,
+            verse_number=1,
+        )
+
+    book_index = book_order.index(ref.book_id)
+    if book_index > 0:
+        prev_book = book_order[book_index - 1]
+        last_chapter = chapter_count_by_book[prev_book]
+        return Reference(
+            book_id=prev_book,
+            chapter_number=last_chapter,
+            verse_number=1,
+        )
+
+    return None
