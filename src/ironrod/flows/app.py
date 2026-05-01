@@ -29,6 +29,8 @@ SPECIAL_KEYS = {
     Keys.Down: "down",
     Keys.Left: "left",
     Keys.Right: "right",
+    Keys.PageUp: "pageup",
+    Keys.PageDown: "pagedown",
     Keys.Enter: "enter",
     Keys.ControlJ: "enter",
     Keys.ControlM: "enter",
