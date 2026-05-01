@@ -19,6 +19,7 @@ from prompt_toolkit.output import DummyOutput
 
 from ironrod.clients.scriptures import ScriptureDB
 from ironrod.clients.testing.bookmarks_inmemory import InMemoryBookmarkJournal
+from ironrod.clients.testing.history_inmemory import InMemoryHistoryJournal
 from ironrod.flows.app import build_application
 from ironrod.flows.state import App as StateApp
 
@@ -30,7 +31,11 @@ def db() -> Iterator[ScriptureDB]:
 
 
 def test_wrapper_boots_and_quits(db: ScriptureDB) -> None:
-    state = StateApp(db=db, journal=InMemoryBookmarkJournal())
+    state = StateApp(
+        db=db,
+        journal=InMemoryBookmarkJournal(),
+        history=InMemoryHistoryJournal(),
+    )
     with create_pipe_input() as pipe:
         # Send three "j" then "q" to advance and quit.
         pipe.send_text("jjjq")
@@ -44,7 +49,11 @@ def test_wrapper_boots_and_quits(db: ScriptureDB) -> None:
 
 
 def test_wrapper_handles_goto_keys(db: ScriptureDB) -> None:
-    state = StateApp(db=db, journal=InMemoryBookmarkJournal())
+    state = StateApp(
+        db=db,
+        journal=InMemoryBookmarkJournal(),
+        history=InMemoryHistoryJournal(),
+    )
     with create_pipe_input() as pipe:
         # g, "1 ne 3", Enter, q.
         pipe.send_text("g1 ne 3\rq")

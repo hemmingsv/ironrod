@@ -15,6 +15,7 @@ from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 
 from ironrod.clients.bookmarks import BookmarkJournal
+from ironrod.clients.history import HistoryJournal
 from ironrod.clients.scriptures import ScriptureDB
 from ironrod.flows.state import App as StateApp
 
@@ -102,6 +103,7 @@ def run() -> None:
     """
     with ScriptureDB() as db:
         journal = BookmarkJournal()
-        state_app = StateApp(db=db, journal=journal)
+        history = HistoryJournal()
+        state_app = StateApp(db=db, journal=journal, history=history)
         app = build_application(state_app)
         app.run()
