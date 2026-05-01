@@ -788,6 +788,145 @@ def test_history_mode_header_shows_indicator(app: App) -> None:
     assert "[history]" in rendered
 
 
+# session "verses read" cursor
+
+def _scroll_until_top_changes(app: App, max_steps: int = 60) -> Reference:
+    initial = app.study.top_ref
+    for _ in range(max_steps):
+        app.on_key("j")
+        if app.study.top_ref != initial:
+            return app.study.top_ref
+    raise AssertionError("scroll never crossed a verse boundary")
+
+
+def test_read_cursor_initialized_at_head_on_first_run(app: App) -> None:
+    assert app.read_cursors[app.bookmark.slug] == app.bookmark.reference
+
+
+def test_read_indicator_hidden_at_zero_verses_read(app: App) -> None:
+    rendered = "\n".join(app.render())
+    assert "verses read" not in rendered
+
+
+def test_read_indicator_shows_after_scrolling_down(app: App) -> None:
+    _scroll_until_top_changes(app)
+    rendered = "\n".join(app.render())
+    assert "verses read" in rendered
+
+
+def test_read_indicator_right_aligned_in_header(app: App) -> None:
+    _scroll_until_top_changes(app)
+    header = app.render()[0]
+    assert header.rstrip().endswith("verses read")
+    assert app.bookmark.name in header
+
+
+def test_enter_resets_read_cursor(app: App) -> None:
+    moved = _scroll_until_top_changes(app)
+    assert "verses read" in "\n".join(app.render())
+    app.on_key("enter")
+    assert app.read_cursors[app.bookmark.slug] == moved
+    assert "verses read" not in "\n".join(app.render())
+
+
+def test_scroll_up_below_cursor_hides_indicator(db: ScriptureDB, app: App) -> None:
+    # Park HEAD a little forward so we can scroll up past the initial cursor.
+    nephi = _book_id(db, "1 Nephi")
+    start = Reference(book_id=nephi, chapter_number=3, verse_number=5)
+    app.read_cursors[app.bookmark.slug] = start
+    app.study.top_ref = start
+    # Scroll up so HEAD is before the cursor.
+    for _ in range(60):
+        before = app.study.top_ref
+        app.on_key("k")
+        if app.study.top_ref != before:
+            break
+    assert app.db.verse_distance(start, app.study.top_ref) < 0
+    assert "verses read" not in "\n".join(app.render())
+
+
+def test_verse_jump_resets_read_cursor(app: App) -> None:
+    _scroll_until_top_changes(app)
+    app.on_key(":")
+    app.on_key("7")
+    app.on_key("enter")
+    assert app.read_cursors[app.bookmark.slug] == app.study.top_ref
+    assert "verses read" not in "\n".join(app.render())
+
+
+def test_goto_resets_read_cursor(app: App) -> None:
+    _scroll_until_top_changes(app)
+    app.on_key("g")
+    for ch in "1 nephi 3":
+        app.on_key(ch)
+    app.on_key("enter")
+    assert app.read_cursors[app.bookmark.slug] == app.study.top_ref
+    assert "verses read" not in "\n".join(app.render())
+
+
+def test_history_mode_hides_indicator(app: App) -> None:
+    moved = _scroll_until_top_changes(app)
+    app.on_key("enter")  # commit so history has something to walk to.
+    # Re-establish a non-zero count by scrolling forward again.
+    _scroll_until_top_changes(app)
+    assert "verses read" in "\n".join(app.render())
+    app.on_key("left")
+    assert app.study.mode == "history"
+    rendered = "\n".join(app.render())
+    assert "[history]" in rendered
+    assert "verses read" not in rendered
+
+
+def test_history_settle_resets_read_cursor(app: App) -> None:
+    moved = _scroll_until_top_changes(app)
+    app.on_key("enter")
+    _scroll_until_top_changes(app)
+    app.on_key("left")  # into history mode, walks back one step.
+    settled = app.study.top_ref
+    app.on_key("enter")  # settle.
+    assert app.read_cursors[app.bookmark.slug] == settled
+
+
+def test_history_escape_preserves_read_cursor(app: App) -> None:
+    cursor_before = app.read_cursors[app.bookmark.slug]
+    moved = _scroll_until_top_changes(app)
+    app.on_key("enter")  # commit; this resets cursor to `moved`.
+    cursor_after_enter = app.read_cursors[app.bookmark.slug]
+    assert cursor_after_enter == moved
+    _scroll_until_top_changes(app)
+    app.on_key("left")  # enter history mode.
+    app.on_key("escape")  # cancel.
+    # Cursor unchanged by entering+escaping history.
+    assert app.read_cursors[app.bookmark.slug] == cursor_after_enter
+
+
+def test_read_cursor_is_per_bookmark(app: App, db: ScriptureDB) -> None:
+    # Advance my-study HEAD first; cursor remains at INITIAL_REF.
+    _scroll_until_top_changes(app)
+    nephi = _book_id(db, "1 Nephi")
+    other_ref = Reference(book_id=nephi, chapter_number=3, verse_number=7)
+    # Create Evening AFTER the scroll so Evening sits at the top of the switcher.
+    app.journal.create("Evening", other_ref)
+    app.on_key("b")
+    app.on_key("enter")  # switch to evening (top of switcher).
+    assert app.bookmark.slug == "evening"
+    # Evening's cursor is initialized to its own HEAD.
+    assert app.read_cursors["evening"] == other_ref
+    # No "verses read" message in evening yet.
+    assert "verses read" not in "\n".join(app.render())
+    # my-study's cursor is preserved while we're elsewhere.
+    assert app.read_cursors["my-study"] == INITIAL_REF
+
+
+def test_enter_at_head_still_resets_cursor(app: App) -> None:
+    # User is at HEAD with no scrolling; cursor == HEAD. Enter is a dedup'd
+    # no-op for history but should still feel like a "settle here" gesture.
+    cursor_before = app.read_cursors[app.bookmark.slug]
+    app.on_key("enter")
+    assert app.read_cursors[app.bookmark.slug] == app.study.top_ref
+    assert app.read_cursors[app.bookmark.slug] == cursor_before  # equal here
+
+
 # disk integration: same flow with real BookmarkJournal
 
 def test_disk_journal_persists_after_navigation(tmp_path, db: ScriptureDB) -> None:

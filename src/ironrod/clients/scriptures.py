@@ -7,6 +7,7 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from types import TracebackType
 
+from ironrod.core.navigation import next_reference, prev_reference, verse_distance
 from ironrod.core.navigation import (
     next_chapter_start,
     next_reference,
@@ -196,6 +197,15 @@ class ScriptureDB:
             verse_count_by_chapter=self._verse_count_by_chapter,
         )
 
+    def verse_distance(self, a: Reference, b: Reference) -> int:
+        return verse_distance(
+            a,
+            b,
+            book_order=self._book_order,
+            chapter_count_by_book=self._chapter_count_by_book,
+            verse_count_by_chapter=self._verse_count_by_chapter,
+        )
+    
     def next_chapter_start(self, ref: Reference) -> Reference | None:
         return next_chapter_start(
             ref,

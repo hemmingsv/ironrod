@@ -96,6 +96,12 @@ class App:
     goto: GotoState = field(init=False, default_factory=GotoState)
     switcher: SwitcherState = field(init=False, default_factory=SwitcherState)
     newbookmark: NewBookmarkState = field(init=False, default_factory=NewBookmarkState)
+    # Per-bookmark, session-only "started reading here" cursor. Anchors the
+    # "X verses read" indicator. Lives only in memory — cleared on restart.
+    # Initialized to the bookmark's HEAD on first entry, reset on user-initiated
+    # settles (Enter, verse-jump, goto, history settle); preserved when entering
+    # history mode and when escaping it.
+    read_cursors: dict[str, Reference] = field(init=False, default_factory=dict)
     flash: str | None = None
     quitting: bool = False
 
@@ -107,6 +113,21 @@ class App:
         else:
             self.bookmark = existing
         self.study = StudyState(top_ref=self.bookmark.reference, top_line_offset=0)
+        self._ensure_read_cursor()
+
+    # read cursor (session-only "started reading here" anchor)
+
+    def _ensure_read_cursor(self) -> None:
+        self.read_cursors.setdefault(self.bookmark.slug, self.bookmark.reference)
+
+    def _reset_read_cursor(self) -> None:
+        self.read_cursors[self.bookmark.slug] = self.study.top_ref
+
+    def _verses_read(self) -> int:
+        cursor = self.read_cursors.get(self.bookmark.slug)
+        if cursor is None:
+            return 0
+        return self.db.verse_distance(cursor, self.study.top_ref)
 
     # rendering helpers
 
@@ -151,10 +172,18 @@ class App:
 
     def _render_study(self) -> list[str]:
         suffix = " [history]" if self.study.mode == "history" else ""
-        header = (
+        header_left = (
             f"{self.bookmark.name}{suffix} — "
             f"{self._ref_long_label(self.study.top_ref)}"
         )
+        header = header_left
+        if self.study.mode != "history":
+            n = self._verses_read()
+            if n > 0:
+                right = f"{n} verses read"
+                pad = self.width - len(header_left) - len(right)
+                if pad >= 1:
+                    header = header_left + " " * pad + right
         body = lay_out(
             self.study.top_ref,
             self.study.top_line_offset,
@@ -290,6 +319,7 @@ class App:
             # immediate exit of history mode so commit-on-transition remains
             # the single primitive — no other side-effects.
             self._commit_history()
+            self._reset_read_cursor()
         elif key == "g":
             self.screen = "goto"
             self.goto = GotoState()
@@ -346,6 +376,7 @@ class App:
             return
         if key == "enter":
             self._exit_history_mode(commit=True)
+            self._reset_read_cursor()
             return
         if key == "escape":
             self._exit_history_mode(commit=False)
@@ -388,6 +419,7 @@ class App:
                 self._commit_history()
                 self._set_top(new_ref)
                 self._commit_history(new_ref)
+                self._reset_read_cursor()
             else:
                 chapter_label = self._ref_long_label(self.study.top_ref).rsplit(":", 1)[0]
                 hint = " (try -1 for last verse)" if n > 0 else ""
@@ -520,6 +552,7 @@ class App:
             self._commit_history()
             self._set_top(target)
             self._commit_history(target)
+            self._reset_read_cursor()
             return
         if key in ("up",):
             self.goto.selected = max(0, self.goto.selected - 1)
@@ -580,6 +613,7 @@ class App:
             self.bookmark = self.journal.touch(target.slug)
             self.study = StudyState(top_ref=self.bookmark.reference)
             self.screen = "study"
+            self._ensure_read_cursor()
 
     # newbookmark handlers
 
@@ -607,6 +641,7 @@ class App:
             self.bookmark = bm
             self.study = StudyState(top_ref=bm.reference)
             self.screen = "study"
+            self._ensure_read_cursor()
             # Seed the new bookmark's history with its initial position so that
             # ←/→ have something to walk to from day one.
             self.history.append(bm.slug, bm.reference)
