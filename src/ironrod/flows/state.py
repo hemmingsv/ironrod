@@ -21,7 +21,7 @@ from ironrod.clients.bookmarks import (
 )
 from ironrod.clients.scriptures import ScriptureDB
 from ironrod.core.fuzzy import score
-from ironrod.core.layout import lay_out, scroll_down, scroll_up
+from ironrod.core.layout import lay_out, page_down, page_up, scroll_down, scroll_up
 from ironrod.models import Bookmark, ChapterEntry, HistoryRecord, Reference
 
 DEFAULT_NAME = "my-study"
@@ -29,7 +29,6 @@ INITIAL_REF = Reference(book_id=1, chapter_number=1, verse_number=1)
 HEADER_LINES = 1
 FOOTER_LINES = 2
 CHROME_LINES = HEADER_LINES + FOOTER_LINES
-PAGE_OVERLAP = 3
 
 
 Mode = Literal["normal", "verse-jump", "history"]
@@ -429,22 +428,41 @@ class App:
             self.study.top_line_offset = new_offset
 
     def _scroll_down_page(self) -> None:
-        # Overlap by PAGE_OVERLAP rows so the bottom of the previous screen
-        # reappears at the top of the new one.
-        steps = max(1, self.body_height - PAGE_OVERLAP)
-        for _ in range(steps):
-            before = (self.study.top_ref, self.study.top_line_offset)
-            self._scroll_down_one()
-            if (self.study.top_ref, self.study.top_line_offset) == before:
-                break
+        result = page_down(
+            self.study.top_ref,
+            self.study.top_line_offset,
+            body_height=self.body_height,
+            width=self.width,
+            next_ref=self.db.next_reference,
+            verse_text=self._verse_text,
+            book_title=self._book_title,
+        )
+        if result is None:
+            return
+        new_top, new_offset = result
+        if new_top != self.study.top_ref:
+            self._set_top_with_offset(new_top, new_offset)
+        else:
+            self.study.top_line_offset = new_offset
 
     def _scroll_up_page(self) -> None:
-        steps = max(1, self.body_height - PAGE_OVERLAP)
-        for _ in range(steps):
-            before = (self.study.top_ref, self.study.top_line_offset)
-            self._scroll_up_one()
-            if (self.study.top_ref, self.study.top_line_offset) == before:
-                break
+        result = page_up(
+            self.study.top_ref,
+            self.study.top_line_offset,
+            body_height=self.body_height,
+            width=self.width,
+            next_ref=self.db.next_reference,
+            prev_ref=self.db.prev_reference,
+            verse_text=self._verse_text,
+            book_title=self._book_title,
+        )
+        if result is None:
+            return
+        new_top, new_offset = result
+        if new_top != self.study.top_ref:
+            self._set_top_with_offset(new_top, new_offset)
+        else:
+            self.study.top_line_offset = new_offset
 
     def _set_top(self, ref: Reference) -> None:
         """Set top_ref to a new verse with offset 0. Persists to journal."""

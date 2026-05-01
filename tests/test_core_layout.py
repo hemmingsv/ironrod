@@ -7,7 +7,14 @@ boundaries, and that the canon-end / canon-start return None.
 
 import pytest
 
-from ironrod.core.layout import LayoutLine, lay_out, scroll_down, scroll_up
+from ironrod.core.layout import (
+    LayoutLine,
+    lay_out,
+    page_down,
+    page_up,
+    scroll_down,
+    scroll_up,
+)
 from ironrod.models import Reference
 
 # Tiny canon:
@@ -152,3 +159,71 @@ def test_scroll_down_then_up_round_trip() -> None:
         assert prv == expected
         cur = prv
     assert scroll_up(cur[0], cur[1], width=WIDTH, prev_ref=prev_ref, verse_text=verse_text) is None
+
+
+# page_down / page_up
+
+KW = {
+    "width": WIDTH,
+    "next_ref": next_ref,
+    "verse_text": verse_text,
+    "book_title": book_title,
+}
+
+
+def test_page_down_aligns_last_visible_verse_start_to_top() -> None:
+    # body_height = 3 from Alpha (1 line) shows: Alpha@0, Beta@0, Beta@1.
+    # Last verse-start visible is Beta — it becomes the new top.
+    assert page_down(ORDERED[0], 0, body_height=3, **KW) == (ORDERED[1], 0)
+
+
+def test_page_down_advances_one_verse_when_only_top_start_visible() -> None:
+    # Make body_height equal to Beta's full line count so only Beta@0 is the
+    # verse-start visible. Page down should advance to the next verse.
+    h = lines_for(ORDERED[1])
+    assert page_down(ORDERED[1], 0, body_height=h, **KW) == (ORDERED[2], 0)
+
+
+def test_page_down_at_canon_end_returns_none() -> None:
+    # Top is Gamma (last verse), nothing forward.
+    assert page_down(ORDERED[2], 0, body_height=5, **KW) is None
+
+
+def test_page_down_when_top_offset_skips_top_verse() -> None:
+    # Top is Beta with offset 1 (its first line is above the viewport).
+    # body_height = 3 → shows Beta@1, Beta@2, then header for ch2, then Gamma@0.
+    # The only verse-start visible is Gamma (Beta is excluded by offset).
+    # That's a forward move, so the result is Gamma at offset 0.
+    assert page_down(ORDERED[1], 1, body_height=3, **KW) == (ORDERED[2], 0)
+
+
+def test_page_up_at_canon_start_returns_none() -> None:
+    assert page_up(ORDERED[0], 0, body_height=3, prev_ref=prev_ref, **KW) is None
+
+
+def test_page_up_places_first_complete_verse_at_bottom() -> None:
+    # From Gamma@0 with a viewport tall enough to hold everything above, the
+    # new viewport must end with Gamma's last line at the bottom row.
+    # 1 (Alpha) + 3 (Beta) + 1 (header) + 1 (Gamma) = 6 lines.
+    h = 6
+    result = page_up(ORDERED[2], 0, body_height=h, prev_ref=prev_ref, **KW)
+    assert result is not None
+    new_top, new_offset = result
+    body = lay_out(
+        new_top, new_offset, lines_needed=h,
+        width=WIDTH, next_ref=next_ref, verse_text=verse_text,
+        book_title=book_title,
+    )
+    assert body[-1].kind == "verse"
+    assert body[-1].reference == ORDERED[2]
+
+
+def test_page_up_walks_back_when_no_verse_end_visible() -> None:
+    # Beta wraps to multiple lines. From Beta@0 with body_height < Beta's
+    # line count, no verse end is visible. Fallback: walk back one viewport.
+    h = lines_for(ORDERED[1]) - 1  # smaller than Beta's full count
+    assert h >= 1
+    result = page_up(ORDERED[1], 0, body_height=h, prev_ref=prev_ref, **KW)
+    # Should make some upward progress (not return None, not stay put).
+    assert result is not None
+    assert result != (ORDERED[1], 0)
