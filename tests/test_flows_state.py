@@ -127,6 +127,70 @@ def test_pageup_at_canon_start_is_noop(app: App) -> None:
     assert app.study.top_line_offset == 0
 
 
+def test_shift_j_jumps_to_next_chapter_start(db: ScriptureDB, app: App) -> None:
+    # From Gen 1:1, Shift-J → Gen 2:1, regardless of being on v1.
+    app.on_key("J")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=2, verse_number=1)
+    assert app.study.top_line_offset == 0
+    assert app.journal.top().reference == app.study.top_ref
+
+
+def test_shift_j_from_mid_chapter_jumps_to_next_chapter(db: ScriptureDB, app: App) -> None:
+    # Verse-jump to Gen 1:5, then Shift-J → Gen 2:1.
+    app.on_key(":")
+    app.on_key("5")
+    app.on_key("enter")
+    assert app.study.top_ref.verse_number == 5
+    app.on_key("J")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=2, verse_number=1)
+
+
+def test_shift_k_at_verse_one_jumps_to_previous_chapter(db: ScriptureDB, app: App) -> None:
+    # From Gen 2:1, Shift-K → Gen 1:1.
+    app.study.top_ref = Reference(book_id=1, chapter_number=2, verse_number=1)
+    app.study.top_line_offset = 0
+    app.on_key("K")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=1, verse_number=1)
+
+
+def test_shift_k_past_verse_one_snaps_to_verse_one(db: ScriptureDB, app: App) -> None:
+    # From Gen 1:5 (not v1), Shift-K → Gen 1:1.
+    app.on_key(":")
+    app.on_key("5")
+    app.on_key("enter")
+    assert app.study.top_ref.verse_number == 5
+    app.on_key("K")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=1, verse_number=1)
+    # Pressing K again now (at v1) crosses the chapter boundary — but we're at
+    # the very first chapter, so it's a no-op.
+    app.on_key("K")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=1, verse_number=1)
+
+
+def test_shift_k_at_canon_start_is_noop(app: App) -> None:
+    app.on_key("K")
+    assert app.study.top_ref == INITIAL_REF
+    assert app.study.top_line_offset == 0
+
+
+def test_shift_j_crosses_book_boundary(db: ScriptureDB, app: App) -> None:
+    # Genesis has 50 chapters; from Gen 50:1, Shift-J → Exodus 1:1.
+    exodus = _book_id(db, "Exodus")
+    app.study.top_ref = Reference(book_id=1, chapter_number=50, verse_number=1)
+    app.study.top_line_offset = 0
+    app.on_key("J")
+    assert app.study.top_ref == Reference(book_id=exodus, chapter_number=1, verse_number=1)
+
+
+def test_shift_k_crosses_book_boundary(db: ScriptureDB, app: App) -> None:
+    # From Exodus 1:1, Shift-K → Gen 50:1 (last chapter of previous book, v1).
+    exodus = _book_id(db, "Exodus")
+    app.study.top_ref = Reference(book_id=exodus, chapter_number=1, verse_number=1)
+    app.study.top_line_offset = 0
+    app.on_key("K")
+    assert app.study.top_ref == Reference(book_id=1, chapter_number=50, verse_number=1)
+
+
 def test_eternal_scroll_into_next_chapter(db: ScriptureDB, app: App) -> None:
     nephi = _book_id(db, "1 Nephi")
     last_ref = Reference(book_id=nephi, chapter_number=1, verse_number=20)
