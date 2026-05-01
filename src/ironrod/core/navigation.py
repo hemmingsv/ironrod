@@ -52,6 +52,42 @@ def next_reference(
     return None
 
 
+def verse_position(
+    ref: Reference,
+    *,
+    book_order: Sequence[int],
+    chapter_count_by_book: ChapterCount,
+    verse_count_by_chapter: VerseCount,
+) -> int:
+    """Return ``ref``'s zero-based absolute index in canon order."""
+    pos = 0
+    for book_id in book_order:
+        if book_id == ref.book_id:
+            break
+        for ch in range(1, chapter_count_by_book[book_id] + 1):
+            pos += verse_count_by_chapter[(book_id, ch)]
+    for ch in range(1, ref.chapter_number):
+        pos += verse_count_by_chapter[(ref.book_id, ch)]
+    return pos + ref.verse_number - 1
+
+
+def verse_distance(
+    a: Reference,
+    b: Reference,
+    *,
+    book_order: Sequence[int],
+    chapter_count_by_book: ChapterCount,
+    verse_count_by_chapter: VerseCount,
+) -> int:
+    """Signed canon distance from ``a`` to ``b``: positive if ``b`` is after."""
+    kw = {
+        "book_order": book_order,
+        "chapter_count_by_book": chapter_count_by_book,
+        "verse_count_by_chapter": verse_count_by_chapter,
+    }
+    return verse_position(b, **kw) - verse_position(a, **kw)
+
+
 def prev_reference(
     ref: Reference,
     *,

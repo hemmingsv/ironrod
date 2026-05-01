@@ -10,7 +10,12 @@ boundaries without depending on the real SQLite DB.
 
 import pytest
 
-from ironrod.core.navigation import next_reference, prev_reference
+from ironrod.core.navigation import (
+    next_reference,
+    prev_reference,
+    verse_distance,
+    verse_position,
+)
 from ironrod.models import Reference
 
 BOOK_ORDER = [1, 2, 3]
@@ -105,6 +110,46 @@ def test_prev_then_next_returns_to_start(r: Reference) -> None:
         assert r == ref(1, 1, 1)
         return
     assert next_reference(prv, **KW) == r
+
+
+# verse_position / verse_distance
+
+def test_verse_position_starts_at_zero() -> None:
+    assert verse_position(ref(1, 1, 1), **KW) == 0
+
+
+def test_verse_position_within_chapter() -> None:
+    assert verse_position(ref(1, 1, 3), **KW) == 2
+
+
+def test_verse_position_crosses_chapters_and_books() -> None:
+    # Book 1 has 3 + 2 = 5 verses, so book 2 v1 is at index 5.
+    assert verse_position(ref(2, 1, 1), **KW) == 5
+    # Book 1 (5) + book 2 (1) = 6, so book 3 ch2 v1 is at 6 + 2 = 8.
+    assert verse_position(ref(3, 2, 1), **KW) == 8
+
+
+def test_verse_position_matches_forward_walk() -> None:
+    cur = ref(1, 1, 1)
+    expected = 0
+    while True:
+        assert verse_position(cur, **KW) == expected
+        nxt = next_reference(cur, **KW)
+        if nxt is None:
+            break
+        cur, expected = nxt, expected + 1
+
+
+def test_verse_distance_signed() -> None:
+    a, b = ref(1, 1, 1), ref(1, 1, 3)
+    assert verse_distance(a, b, **KW) == 2
+    assert verse_distance(b, a, **KW) == -2
+    assert verse_distance(a, a, **KW) == 0
+
+
+def test_verse_distance_across_books() -> None:
+    # Gen-style canon: from book 1 ch 1 v 1 to book 3 ch 2 v 1 is 8 steps.
+    assert verse_distance(ref(1, 1, 1), ref(3, 2, 1), **KW) == 8
 
 
 def test_full_forward_walk_visits_every_verse() -> None:
