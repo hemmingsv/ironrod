@@ -704,7 +704,7 @@ def test_switcher_does_not_commit_to_history(app: App, db: ScriptureDB) -> None:
 
 def test_new_bookmark_seeds_history(app: App) -> None:
     app.on_key("b")
-    app.on_key("n")
+    app.on_key("c")
     for ch in "evening":
         app.on_key(ch)
     app.on_key("enter")
@@ -724,7 +724,7 @@ def test_history_is_per_bookmark(app: App, db: ScriptureDB) -> None:
     app.on_key("enter")
     # Create a second bookmark via the new-bookmark flow.
     app.on_key("b")
-    app.on_key("n")
+    app.on_key("c")
     for ch in "evening":
         app.on_key(ch)
     app.on_key("enter")
