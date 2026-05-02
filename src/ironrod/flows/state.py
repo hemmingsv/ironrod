@@ -32,7 +32,55 @@ CHROME_LINES = HEADER_LINES + FOOTER_LINES
 
 
 Mode = Literal["normal", "verse-jump", "history"]
-Screen = Literal["study", "goto", "switcher", "newbookmark"]
+Screen = Literal["study", "goto", "switcher", "newbookmark", "help"]
+
+
+# Static reference rendered by the help screen. Lists every binding for every
+# mode and dialog, regardless of which one is currently active — the help is
+# a dumb, exhaustive cheat sheet, not a context-sensitive prompt.
+HELP_LINES: tuple[str, ...] = (
+    "Study (main reading screen)",
+    "  j         scroll down 1 line          k         scroll up 1 line",
+    "  PgDn      page down                   PgUp      page up",
+    "  J (shift) jump to next chapter        K (shift) jump to previous chapter",
+    "            from mid-chapter K first snaps to verse 1 of the current chapter",
+    "  h         step back in history        l         step forward",
+    "  Enter     mark current position in history",
+    "  :         verse jump (see below)      g         goto chapter (see below)",
+    "  b         bookmarks (see below)       ?         this help",
+    "  q         quit",
+    "  arrow keys also work:  ↓ = j   ↑ = k   ← = h   → = l",
+    "",
+    "Verse jump (after pressing :)",
+    "  0-9       append digit                -         negative — counts from end",
+    "  Bksp      delete digit                Enter     jump        Esc   cancel",
+    "  e.g.  :7  jumps to verse 7;   :-1  jumps to the last verse of the chapter",
+    "",
+    "History walk (after pressing h while in study)",
+    "  h         step further back           l         step forward",
+    "  Enter     settle here (commit)        Esc       cancel — return to start",
+    "  any other key settles here, then acts on that key",
+    "",
+    "Goto chapter (after pressing g)",
+    "  type      fuzzy-filter the list       Bksp      delete char",
+    "  ↑ / ↓     select                      Enter     jump        Esc   cancel",
+    "",
+    "Bookmarks (after pressing b)",
+    "  j / k     select                      Enter     switch to selected",
+    "  c         create new bookmark         d         delete current bookmark",
+    "  ?         this help                   Esc       back to study",
+    "  ↑ / ↓ also select",
+    "",
+    "New bookmark (after pressing c in bookmarks)",
+    "  type      enter a name                Bksp      delete char",
+    "  Enter     create                      Esc       cancel",
+    "",
+    "How it works",
+    "  Each bookmark keeps its own reading position and a back/forward history.",
+    "  Scrolling auto-saves the position. Jumps (verse jump, goto, switching",
+    "  bookmarks) commit both source and destination, so h and l can walk",
+    "  through them later. Consecutive identical positions are deduped.",
+)
 
 
 class JournalProto(Protocol):
@@ -82,6 +130,12 @@ class NewBookmarkState:
 
 
 @dataclass
+class HelpState:
+    return_to: Screen = "study"
+    scroll: int = 0
+
+
+@dataclass
 class App:
     db: ScriptureDB
     journal: JournalProto
@@ -96,6 +150,7 @@ class App:
     goto: GotoState = field(init=False, default_factory=GotoState)
     switcher: SwitcherState = field(init=False, default_factory=SwitcherState)
     newbookmark: NewBookmarkState = field(init=False, default_factory=NewBookmarkState)
+    help: HelpState = field(init=False, default_factory=HelpState)
     # Per-bookmark, session-only "started reading here" cursor. Anchors the
     # "X verses read" indicator. Lives only in memory — cleared on restart.
     # Initialized to the bookmark's HEAD on first entry, reset on user-initiated
@@ -163,6 +218,8 @@ class App:
             return self._render_switcher()
         if self.screen == "newbookmark":
             return self._render_newbookmark()
+        if self.screen == "help":
+            return self._render_help()
         raise AssertionError(f"unknown screen {self.screen!r}")
 
     def _pad_to_height(self, lines: list[str]) -> list[str]:
@@ -204,7 +261,7 @@ class App:
             pos = self.study.history_index + 1
             footer = f"← {pos}/{total} →   Enter settle  Esc cancel"
         else:
-            footer = "j/↓/PgDn down  k/↑/PgUp up  J/K chapter  ←/→ history  : verse  g goto  b bookmarks  q quit"
+            footer = "j/↓/PgDn down  k/↑/PgUp up  J/K chapter  ←/→ history  : verse  g goto  b bookmarks  ? help  q quit"
         if self.flash:
             footer = f"{self.flash}"
         return self._pad_to_height([header, *body_lines, sep, footer])
@@ -255,7 +312,7 @@ class App:
         if self.switcher.confirming_delete:
             footer = "Delete this bookmark? (y/n)"
         else:
-            footer = "Enter switch  c create  j/k select  d delete  Esc back"
+            footer = "Enter switch  c create  j/k select  d delete  ? help  Esc back"
         return self._pad_to_height([header, *list_lines, sep, footer])
 
     def _render_newbookmark(self) -> list[str]:
@@ -269,6 +326,27 @@ class App:
         sep = "─" * self.width
         footer = "Enter create  Esc cancel"
         return self._pad_to_height([header, *body, sep, footer])
+
+    def _render_help(self) -> list[str]:
+        body_height = self.body_height
+        total = len(HELP_LINES)
+        max_scroll = max(0, total - body_height)
+        # Clamp the persisted scroll: window may have grown since last input.
+        self.help.scroll = max(0, min(self.help.scroll, max_scroll))
+        scroll = self.help.scroll
+        visible = list(HELP_LINES[scroll : scroll + body_height])
+        if len(visible) < body_height:
+            visible += [""] * (body_height - len(visible))
+        header = "ironrod keybindings — Esc to return"
+        sep = "─" * self.width
+        if max_scroll == 0:
+            footer = "Esc back"
+        else:
+            shown_lo = scroll + 1
+            shown_hi = min(scroll + body_height, total)
+            pos = f"{shown_lo}–{shown_hi} of {total}"
+            footer = f"j/k scroll  PgUp/PgDn page  Esc back   ({pos})"
+        return self._pad_to_height([header, *visible, sep, footer])
 
     # input dispatch
 
@@ -286,6 +364,8 @@ class App:
             self._on_key_switcher(key)
         elif self.screen == "newbookmark":
             self._on_key_newbookmark(key)
+        elif self.screen == "help":
+            self._on_key_help(key)
 
     # study handlers
 
@@ -331,6 +411,8 @@ class App:
         elif key == ":":
             self.study.mode = "verse-jump"
             self.study.verse_jump_buf = ""
+        elif key == "?":
+            self._open_help()
 
     # History mode
 
@@ -600,6 +682,9 @@ class App:
             if bookmarks:
                 self.switcher.confirming_delete = True
             return
+        if key == "?":
+            self._open_help()
+            return
         if key in ("up", "k"):
             self.switcher.selected = max(0, self.switcher.selected - 1)
             return
@@ -649,3 +734,25 @@ class App:
         if len(key) == 1 and key.isprintable():
             self.newbookmark.name_buf += key
             self.newbookmark.error = None
+
+    # help handlers
+
+    def _open_help(self) -> None:
+        self.help = HelpState(return_to=self.screen)
+        self.screen = "help"
+
+    def _on_key_help(self, key: str) -> None:
+        if key == "escape":
+            self.screen = self.help.return_to
+            return
+        max_scroll = max(0, len(HELP_LINES) - self.body_height)
+        # Page step keeps a couple of lines of context across the seam.
+        page_step = max(1, self.body_height - 3)
+        if key in ("j", "down"):
+            self.help.scroll = min(max_scroll, self.help.scroll + 1)
+        elif key in ("k", "up"):
+            self.help.scroll = max(0, self.help.scroll - 1)
+        elif key == "pagedown":
+            self.help.scroll = min(max_scroll, self.help.scroll + page_step)
+        elif key == "pageup":
+            self.help.scroll = max(0, self.help.scroll - page_step)

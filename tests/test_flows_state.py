@@ -927,6 +927,196 @@ def test_enter_at_head_still_resets_cursor(app: App) -> None:
     assert app.read_cursors[app.bookmark.slug] == cursor_before  # equal here
 
 
+# help screen
+
+
+def _help_app(db: ScriptureDB) -> App:
+    # Tall enough to render the entire help cheat sheet without truncation.
+    return App(
+        db=db,
+        journal=InMemoryBookmarkJournal(),
+        history=InMemoryHistoryJournal(),
+        width=80,
+        height=60,
+    )
+
+
+def test_question_mark_opens_help_from_study(app: App) -> None:
+    app.on_key("?")
+    assert app.screen == "help"
+
+
+def test_help_escape_returns_to_study(app: App) -> None:
+    app.on_key("?")
+    app.on_key("escape")
+    assert app.screen == "study"
+
+
+def test_question_mark_opens_help_from_switcher(app: App) -> None:
+    app.on_key("b")
+    assert app.screen == "switcher"
+    app.on_key("?")
+    assert app.screen == "help"
+    app.on_key("escape")
+    assert app.screen == "switcher"
+
+
+def test_help_ignores_random_keys(app: App) -> None:
+    app.on_key("?")
+    for k in ("q", "g", "b", "x", "enter"):
+        app.on_key(k)
+        assert app.screen == "help"
+    app.on_key("escape")
+    assert app.screen == "study"
+
+
+def test_help_scrolls_when_taller_than_terminal(app: App) -> None:
+    # Default fixture is height=20: the help is taller than the body, so
+    # j/k/PgDn/PgUp must scroll rather than exit.
+    app.on_key("?")
+    assert app.help.scroll == 0
+    app.on_key("j")
+    assert app.help.scroll == 1
+    app.on_key("down")
+    assert app.help.scroll == 2
+    app.on_key("k")
+    assert app.help.scroll == 1
+    app.on_key("up")
+    assert app.help.scroll == 0
+    # Cannot scroll above the top.
+    app.on_key("k")
+    assert app.help.scroll == 0
+    # Page jumps move further; clamped at the bottom.
+    app.on_key("pagedown")
+    assert app.help.scroll > 2
+    for _ in range(20):
+        app.on_key("pagedown")
+    bottom = app.help.scroll
+    assert bottom > 0
+    app.on_key("pagedown")
+    assert app.help.scroll == bottom  # clamped
+    app.on_key("pageup")
+    assert app.help.scroll < bottom
+
+
+def test_help_no_scroll_when_fits(db: ScriptureDB) -> None:
+    # On a tall terminal the whole help fits — footer should not advertise
+    # scroll keys, and j/k should be inert.
+    app = _help_app(db)
+    app.on_key("?")
+    rendered = "\n".join(app.render())
+    assert "j/k scroll" not in rendered
+    app.on_key("j")
+    assert app.help.scroll == 0
+
+
+def test_help_scroll_resets_per_open(app: App) -> None:
+    # Scroll, exit, reopen: should be back at the top so the user always lands
+    # on the first section.
+    app.on_key("?")
+    app.on_key("pagedown")
+    assert app.help.scroll > 0
+    app.on_key("escape")
+    app.on_key("?")
+    assert app.help.scroll == 0
+
+
+def test_help_footer_shows_position_when_scrollable(app: App) -> None:
+    app.on_key("?")
+    rendered = "\n".join(app.render())
+    assert "j/k scroll" in rendered
+    assert " of " in rendered  # position indicator like "1–17 of 39"
+
+
+def test_help_lists_bindings_from_every_mode(db: ScriptureDB) -> None:
+    # The help is a dumb, exhaustive cheat sheet — it should mention every
+    # mode/dialog regardless of which one is currently active.
+    app = _help_app(db)
+    app.on_key("?")
+    rendered = "\n".join(app.render())
+    for section in (
+        "Study",
+        "Verse jump",
+        "History walk",
+        "Goto chapter",
+        "Bookmarks",
+        "New bookmark",
+    ):
+        assert section in rendered, f"help missing section: {section}"
+
+
+def test_help_uses_h_and_l_letters(db: ScriptureDB) -> None:
+    app = _help_app(db)
+    app.on_key("?")
+    rendered = "\n".join(app.render())
+    # Vim-style letters should be visible as discrete tokens; arrows are only
+    # mentioned as a secondary aid.
+    assert " h " in rendered
+    assert " l " in rendered
+    assert " j " in rendered
+    assert " k " in rendered
+
+
+def test_help_documents_shift_jk_chapter_jumps(db: ScriptureDB) -> None:
+    app = _help_app(db)
+    app.on_key("?")
+    rendered = "\n".join(app.render())
+    assert "next chapter" in rendered
+    assert "previous chapter" in rendered
+    assert " J " in rendered
+    assert " K " in rendered
+
+
+def test_help_does_not_open_during_delete_confirm(app: App) -> None:
+    # Two bookmarks so delete is allowed.
+    app.journal.create("Evening", Reference(book_id=1, chapter_number=2, verse_number=1))
+    app.on_key("b")
+    app.on_key("d")
+    assert app.switcher.confirming_delete is True
+    app.on_key("?")
+    # ? is not a y/n answer, and the delete prompt is the only thing the user
+    # should be looking at — stay in switcher with the prompt up.
+    assert app.screen == "switcher"
+    assert app.switcher.confirming_delete is True
+
+
+def test_help_does_not_open_in_verse_jump(app: App) -> None:
+    app.on_key(":")
+    assert app.study.mode == "verse-jump"
+    app.on_key("?")
+    # ? is not a digit and not a control key — verse jump just ignores it.
+    assert app.screen == "study"
+    assert app.study.mode == "verse-jump"
+
+
+def test_help_does_not_open_from_goto_query(app: App) -> None:
+    app.on_key("g")
+    app.on_key("?")
+    # ? is a literal printable char in the goto query, not a help shortcut.
+    assert app.screen == "goto"
+    assert app.goto.query == "?"
+
+
+def test_help_does_not_open_from_newbookmark_input(app: App) -> None:
+    app.on_key("b")
+    app.on_key("c")
+    assert app.screen == "newbookmark"
+    app.on_key("?")
+    assert app.screen == "newbookmark"
+    assert app.newbookmark.name_buf == "?"
+
+
+def test_study_footer_documents_help(app: App) -> None:
+    rendered = "\n".join(app.render())
+    assert "? help" in rendered
+
+
+def test_switcher_footer_documents_help(app: App) -> None:
+    app.on_key("b")
+    rendered = "\n".join(app.render())
+    assert "? help" in rendered
+
+
 # disk integration: same flow with real BookmarkJournal
 
 def test_disk_journal_persists_after_navigation(tmp_path, db: ScriptureDB) -> None:
