@@ -55,8 +55,9 @@ def test_wrapper_handles_goto_keys(db: ScriptureDB) -> None:
         history=InMemoryHistoryJournal(),
     )
     with create_pipe_input() as pipe:
-        # g, "1 ne 3", Enter, q.
-        pipe.send_text("g1 ne 3\rq")
+        # g, "1 nephi 3", Enter, q. Spell out the book name so the query
+        # disambiguates from same-volume matches like 1 Chronicles.
+        pipe.send_text("g1 nephi 3\rq")
         app = build_application(state, input=pipe, output=DummyOutput())
         app.run(in_thread=False)
     nephi = next(b for b in db.books() if b.title == "1 Nephi")

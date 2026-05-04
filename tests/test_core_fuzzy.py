@@ -40,3 +40,19 @@ def test_shorter_label_wins_on_tie() -> None:
 def test_chapter_number_matches() -> None:
     s = score("ps 119", "Psalms 119")
     assert s is not None
+
+
+def test_optimal_alignment_for_repeated_first_char() -> None:
+    # "15" in "1 Nephi 15" must align to the trailing "1 5" (span 1), not
+    # to the leading "1" + far-away "5" (span 9). Otherwise "Alma 15"
+    # (span 1) outranks the user's clear intent of chapter 15 of the
+    # current book.
+    s = score("15", "1 Nephi 15")
+    assert s is not None
+    assert s.span == 1
+
+
+def test_optimal_alignment_picks_tightest_subsequence() -> None:
+    # The label has both a loose ("1...3") and a tight ("13") match.
+    # The tight one wins.
+    assert score("13", "1abc13").span == 1
