@@ -86,6 +86,11 @@ def build_application(
         input=input,
         output=output,
     )
+    # prompt_toolkit waits ttimeoutlen seconds after a bare Escape to
+    # disambiguate it from escape-prefixed sequences (arrow keys etc.).
+    # The default 0.5s makes Esc feel laggy as a cancel; 50 ms is plenty
+    # for terminal sequences, which arrive within a few milliseconds.
+    application.ttimeoutlen = 0.05
 
     @application.before_render.add_handler
     def _sync_size(_app: Application) -> None:  # type: ignore[no-untyped-def]

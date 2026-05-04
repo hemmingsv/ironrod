@@ -62,6 +62,10 @@ class StudyState:
     # on each step) keeps the index stable if anything else appends mid-walk.
     history_view: list[HistoryRecord] | None = None
     history_index: int = 0
+    # Floating HEAD captured on entering history mode so Esc can restore it
+    # to exactly where the user came from. ``None`` iff ``mode != "history"``.
+    history_entry_ref: Reference | None = None
+    history_entry_offset: int = 0
 
 
 @dataclass
@@ -310,23 +314,51 @@ class App:
         return self.history.append(self.bookmark.slug, target)
 
     def _enter_history_mode(self) -> None:
-        """Commit current HEAD, snapshot history, step back by one."""
-        self._commit_history()
+        """Snapshot history, remember the floating HEAD, and step back one
+        record. We do not commit on entry, and the walk itself is purely
+        visual — the journal is only touched on settle. Esc restores the
+        floating HEAD from ``history_entry_ref`` without any persistence.
+        """
         snapshot = self.history.load_for(self.bookmark.slug)
-        if len(snapshot) < 2:
+        if not snapshot:
             self.flash = "no earlier history"
             return
+        if self.study.top_ref == snapshot[-1].reference:
+            # HEAD coincides with the most recent record; step back goes to
+            # the one before it.
+            if len(snapshot) < 2:
+                self.flash = "no earlier history"
+                return
+            target_index = len(snapshot) - 2
+        else:
+            # HEAD is floating (scrolled past the last commit); first step
+            # lands on the most recent record.
+            target_index = len(snapshot) - 1
+        self.study.history_entry_ref = self.study.top_ref
+        self.study.history_entry_offset = self.study.top_line_offset
         self.study.history_view = snapshot
-        self.study.history_index = len(snapshot) - 2
-        self._set_top(snapshot[self.study.history_index].reference)
+        self.study.history_index = target_index
+        self._set_top_visual(snapshot[target_index].reference)
         self.study.mode = "history"
 
     def _exit_history_mode(self, *, commit: bool) -> None:
         if commit:
             self._commit_history()
+            # Persist the settled position once, on transition out.
+            self._set_top_with_offset(
+                self.study.top_ref, self.study.top_line_offset
+            )
+        else:
+            # Esc cancels the walk: restore the floating HEAD we came from.
+            # The journal was never touched during the walk, so no persist.
+            entry_ref = self.study.history_entry_ref
+            if entry_ref is not None:
+                self._set_top_visual(entry_ref, self.study.history_entry_offset)
         self.study.mode = "normal"
         self.study.history_view = None
         self.study.history_index = 0
+        self.study.history_entry_ref = None
+        self.study.history_entry_offset = 0
 
     def _on_key_study_history(self, key: str) -> None:
         view = self.study.history_view
@@ -335,11 +367,11 @@ class App:
             return
         if key in ("left", "h"):
             self.study.history_index = max(0, self.study.history_index - 1)
-            self._set_top(view[self.study.history_index].reference)
+            self._set_top_visual(view[self.study.history_index].reference)
             return
         if key in ("right", "l"):
             self.study.history_index = min(len(view) - 1, self.study.history_index + 1)
-            self._set_top(view[self.study.history_index].reference)
+            self._set_top_visual(view[self.study.history_index].reference)
             return
         if key == "enter":
             self._exit_history_mode(commit=True)
@@ -455,6 +487,13 @@ class App:
         self.study.top_line_offset = offset
         # Persist only the verse, not the offset.
         self.bookmark = self.journal.touch(self.bookmark.slug, ref)
+
+    def _set_top_visual(self, ref: Reference, offset: int = 0) -> None:
+        """Update the on-screen cursor without persisting. Used during a
+        transient history walk where commits happen only on settle.
+        """
+        self.study.top_ref = ref
+        self.study.top_line_offset = offset
 
     # goto handlers
 
