@@ -711,7 +711,7 @@ def test_enter_in_history_mode_settles_and_exits(app: App) -> None:
     assert refs == [INITIAL_REF, a, initial]
 
 
-def test_escape_in_history_mode_exits_without_committing(app: App) -> None:
+def test_escape_in_history_mode_returns_to_floating_head(app: App) -> None:
     initial = app.study.top_ref
     for _ in range(60):
         app.on_key("j")
@@ -721,10 +721,58 @@ def test_escape_in_history_mode_exits_without_committing(app: App) -> None:
     app.on_key("enter")
     app.on_key("left")
     assert app.study.mode == "history"
+    assert app.study.top_ref == initial  # walked back visually
+    # The walk does not persist — bookmark on disk still points at the entry.
+    assert app.journal.get(app.bookmark.slug).reference == a
     before = list(_refs(app))
     app.on_key("escape")
     assert app.study.mode == "normal"
-    assert _refs(app) == before  # no commit
+    assert app.study.top_ref == a  # HEAD restored to entry position
+    assert _refs(app) == before  # history untouched
+    assert app.journal.get(app.bookmark.slug).reference == a  # journal unchanged
+
+
+def test_escape_from_floating_head_restores_without_editing_history(
+    app: App,
+) -> None:
+    """HEAD scrolled past the last commit (floating). ← enters history mode
+    without recording the floating position; Esc returns to it; history is
+    unchanged throughout.
+    """
+    initial = app.study.top_ref
+    for _ in range(60):
+        app.on_key("j")
+        if app.study.top_ref != initial:
+            break
+    a = app.study.top_ref
+    app.on_key("enter")  # commits a → [INITIAL_REF, a]
+    # Scroll past `a` without committing — HEAD is now floating.
+    for _ in range(60):
+        app.on_key("j")
+        if app.study.top_ref != a:
+            break
+    floating = app.study.top_ref
+    assert floating != a
+    history_before = list(_refs(app))
+    assert history_before == [INITIAL_REF, a]
+    journal_before = app.journal.get(app.bookmark.slug).reference
+    assert journal_before == floating
+    app.on_key("left")
+    assert app.study.mode == "history"
+    # First step from a floating HEAD lands on the most recent record.
+    assert app.study.top_ref == a
+    # Entry alone does not write to history or to the bookmark journal.
+    assert _refs(app) == history_before
+    assert app.journal.get(app.bookmark.slug).reference == floating
+    app.on_key("left")
+    assert app.study.top_ref == INITIAL_REF
+    # Walking does not persist either.
+    assert app.journal.get(app.bookmark.slug).reference == floating
+    app.on_key("escape")
+    assert app.study.mode == "normal"
+    assert app.study.top_ref == floating  # restored
+    assert _refs(app) == history_before  # history still untouched
+    assert app.journal.get(app.bookmark.slug).reference == floating
 
 
 def test_scroll_in_history_mode_exits_with_commit_then_scrolls(app: App) -> None:
