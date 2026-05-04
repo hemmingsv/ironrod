@@ -7,8 +7,10 @@ position on every keystroke.
 
 ## Install
 
+Without cloning the repo, you can simply run:
+
 ```sh
-uv tool install .
+uv tool install git+https://github.com/hemmingsv/ironrod
 ```
 
 This puts the `ironrod` command on your PATH. Run it:
@@ -20,7 +22,7 @@ ironrod
 To run it once without installing:
 
 ```sh
-uvx --from . ironrod
+uvx --from git+https://github.com/hemmingsv/ironrod ironrod
 ```
 
 ## How it works
@@ -38,17 +40,23 @@ uvx --from . ironrod
   navigation history (deduplicated against the most recent entry).
 - Press `←` / `h` to walk back through the history and `→` / `l` to walk
   forward. The footer shows `← N/M →` while you are walking. Press `Enter` to
-  settle (appending the walked-to position with dedup) or `Esc` to cancel and
-  return to where you were before walking. Scrolling also settles. Goto and
-  verse jumps append to history automatically; plain scrolling does not.
+  settle (committing the walked-to position) or `Esc` to cancel and return to
+  where you were before walking. Scrolling also settles. Goto and verse jumps
+  append to history automatically; plain scrolling does not.
+- Press `q` to quit. Reopening puts you back on the most-recently-used
+  bookmark, at the verse you left it on.
+
+You can use ironrod with just the default `my-study` bookmark and never open
+the switcher — read at one position and walk history with ←/→. The bookmark
+menu only matters if you want to keep separate reading positions:
+
 - Press `b` to switch between bookmarks (most-recently-used on top). Press
-  `n` from the switcher to create a new one — the new bookmark's birthplace is
+  `c` from the switcher to create a new one — the new bookmark's birthplace is
   written as its first history entry, so `←` can always walk back to where the
   bookmark started. Switching bookmarks itself does not append to history (the
   current head of each bookmark is already saved in `bookmarks.jsonl`). History
   is per-bookmark and lives in `~/.ironrod/history.jsonl` — delete the file any
   time to clear it.
-- Press `q` to quit. Reopening puts you back exactly where you were.
 
 ## Data
 
@@ -61,4 +69,5 @@ from <https://github.com/beandog/lds-scriptures>. See
 ```sh
 uv sync
 uv run pytest
+uv run ironrod
 ```
