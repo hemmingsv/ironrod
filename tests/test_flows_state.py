@@ -249,9 +249,11 @@ def test_eternal_scroll_into_next_chapter(db: ScriptureDB, app: App) -> None:
 # verse jump
 
 def test_verse_jump_within_chapter(app: App) -> None:
-    # Move to start of 1 Nephi 1 first via goto.
+    # Move to start of 1 Nephi 1 first via goto. Use the full book name so
+    # the query is unambiguous from Genesis (otherwise tiered ordering picks
+    # a same-volume match like 1 Chronicles 1 ahead of cross-volume 1 Nephi).
     app.on_key("g")
-    for ch in "1 ne 1":
+    for ch in "1 nephi 1":
         app.on_key(ch)
     app.on_key("enter")
     assert app.screen == "study"
@@ -368,6 +370,49 @@ def test_goto_escape_cancels(app: App) -> None:
     assert app.study.top_ref == original
 
 
+def test_goto_prefers_current_book_on_score_tie(app: App, db: ScriptureDB) -> None:
+    # Typing "j" matches Job, Jude, Joel, James, Jacob, John, etc. With the
+    # cursor in 2 Nephi (Book of Mormon), Jacob (also BoM) should rank above
+    # Job/James/etc — same-volume tier wins on score ties.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("j")
+    titles = [entry.label for entry, _ in app._filtered_chapters()]
+    jacob_pos = next(i for i, t in enumerate(titles) if t.startswith("Jacob "))
+    job_pos = next(i for i, t in enumerate(titles) if t.startswith("Job "))
+    assert jacob_pos < job_pos
+
+
+def test_goto_numeric_selects_current_book_chapter(app: App, db: ScriptureDB) -> None:
+    # A bare number works as a chapter selector for the current book — it's
+    # the natural consequence of preferring same-book chapters on score ties.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("5")
+    app.on_key("enter")
+    assert app.study.top_ref.book_id == nephi2
+    assert app.study.top_ref.chapter_number == 5
+
+
+def test_goto_same_volume_ranks_above_other_volumes(app: App, db: ScriptureDB) -> None:
+    # In 2 Nephi (BoM), typing "1" should put BoM chapters ahead of OT/NT
+    # chapters with the same fuzzy score.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("1")
+    chapters = app._filtered_chapters()
+    bom_id = db.book_by_id(nephi2).volume_id
+    # Walk the list until we find an entry outside the current book; that
+    # entry should still belong to the same volume (Book of Mormon).
+    first_other_book = next(
+        entry for entry, _ in chapters if entry.book_id != nephi2
+    )
+    assert db.book_by_id(first_other_book.book_id).volume_id == bom_id
+
+
 # switcher
 
 def test_switcher_shows_bookmarks(app: App) -> None:
@@ -391,6 +436,42 @@ def test_switcher_select_other_moves_to_top(app: App, db: ScriptureDB) -> None:
     assert app.bookmark.slug == "my-study"
     assert app.journal.top().slug == "my-study"
     assert app.study.top_ref == app.bookmark.reference  # Gen 1:1
+
+
+def test_switcher_default_selects_previous_bookmark(app: App, db: ScriptureDB) -> None:
+    # b+Enter behaves like Alt+Tab: when the active bookmark sits at the top
+    # of the list, the default selection lands on the next-most-recent one,
+    # so Enter immediately switches back to the previous bookmark.
+    nephi = _book_id(db, "1 Nephi")
+    app.journal.create("Evening", Reference(book_id=nephi, chapter_number=3, verse_number=7))
+    # Switch to Evening so it's the active bookmark and sits at the top.
+    app.on_key("b")
+    app.on_key("enter")
+    assert app.bookmark.slug == "evening"
+    assert app.journal.load()[0].slug == "evening"
+    # Now b should default to my-study (index 1, the previous bookmark).
+    app.on_key("b")
+    assert app.switcher.selected == 1
+    app.on_key("enter")
+    assert app.bookmark.slug == "my-study"
+
+
+def test_switcher_default_with_only_one_bookmark_is_zero(app: App) -> None:
+    # Single bookmark — default selection has nowhere else to go.
+    app.on_key("b")
+    assert app.switcher.selected == 0
+
+
+def test_switcher_default_skips_active_when_active_not_at_top(
+    app: App, db: ScriptureDB,
+) -> None:
+    # Edge case: active bookmark isn't at index 0 (e.g. another bookmark was
+    # just created). Default should still skip the active one.
+    nephi = _book_id(db, "1 Nephi")
+    app.journal.create("Evening", Reference(book_id=nephi, chapter_number=3, verse_number=7))
+    # bookmarks = [evening, my-study], active = my-study (still at index 1).
+    app.on_key("b")
+    assert app.switcher.selected == 0  # evening, the first non-active entry
 
 
 def test_switcher_creates_new_at_gen_1_1(app: App) -> None:

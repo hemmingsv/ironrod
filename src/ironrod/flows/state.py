@@ -20,7 +20,7 @@ from ironrod.clients.bookmarks import (
     CannotDeleteLast,
 )
 from ironrod.clients.scriptures import ScriptureDB
-from ironrod.core.fuzzy import score
+from ironrod.core.fuzzy import prefix_match_count, score
 from ironrod.core.layout import lay_out, page_down, page_up, scroll_down, scroll_up
 from ironrod.models import Bookmark, ChapterEntry, HistoryRecord, Reference
 
@@ -267,13 +267,41 @@ class App:
         return self._pad_to_height([header, *body_lines, sep, footer])
 
     def _filtered_chapters(self) -> list[tuple[ChapterEntry, object]]:
+        # Sort by (-prefix_count, tier, book_id, span, chapter, label_length).
+        # ``prefix_count`` (how many whitespace-split query tokens prefix-match
+        # label tokens) leads, so a query like "1 ne 1" puts every 1 Nephi
+        # chapter (count 3) ahead of 1 Chronicles 1 (count 2) — even though
+        # 1 Chronicles is in the user's current volume. After that, ``tier``
+        # groups remaining matches: current book → current volume → other.
+        # Within a tier, books appear in canonical order, then ``span`` orders
+        # chapters inside a single book (so "15" in 1 Nephi puts ch 15 — span
+        # 1 — ahead of ch 5 — span 8).
         index = self.db.chapter_index()
+        current_book_id = self.study.top_ref.book_id
+        current_volume_id = self.db.book_by_id(current_book_id).volume_id
+
+        def tier(book_id: int) -> int:
+            if book_id == current_book_id:
+                return 0
+            if self.db.book_by_id(book_id).volume_id == current_volume_id:
+                return 1
+            return 2
+
         scored: list[tuple[ChapterEntry, object]] = []
         for entry in index:
             s = score(self.goto.query, entry.label)
             if s is not None:
                 scored.append((entry, s))
-        scored.sort(key=lambda t: (t[1], t[0].book_id, t[0].chapter_number))  # type: ignore[arg-type]
+        scored.sort(  # type: ignore[arg-type]
+            key=lambda t: (
+                -prefix_match_count(self.goto.query, t[0].label),
+                tier(t[0].book_id),
+                t[0].book_id,
+                t[1].span,
+                t[0].chapter_number,
+                t[1].label_length,
+            )
+        )
         return scored
 
     def _render_goto(self) -> list[str]:
@@ -405,7 +433,7 @@ class App:
             self.goto = GotoState()
         elif key == "b":
             self.screen = "switcher"
-            self.switcher = SwitcherState()
+            self.switcher = SwitcherState(selected=self._default_switcher_selection())
         elif key == "q":
             self.quitting = True
         elif key == ":":
@@ -653,6 +681,16 @@ class App:
             self.goto.selected = 0
 
     # switcher handlers
+
+    def _default_switcher_selection(self) -> int:
+        # Default to the most recent bookmark that isn't the active one, so
+        # b+Enter behaves like Alt+Tab — switching to the previously used
+        # bookmark. With only one bookmark, fall back to 0.
+        bookmarks = self.journal.load()
+        for i, bm in enumerate(bookmarks):
+            if bm.slug != self.bookmark.slug:
+                return i
+        return 0
 
     def _on_key_switcher(self, key: str) -> None:
         bookmarks = self.journal.load()
