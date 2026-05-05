@@ -20,7 +20,7 @@ from ironrod.clients.bookmarks import (
     CannotDeleteLast,
 )
 from ironrod.clients.scriptures import ScriptureDB
-from ironrod.core.fuzzy import score
+from ironrod.core.fuzzy import prefix_match_count, score
 from ironrod.core.layout import lay_out, page_down, page_up, scroll_down, scroll_up
 from ironrod.models import Bookmark, ChapterEntry, HistoryRecord, Reference
 
@@ -110,6 +110,10 @@ class StudyState:
     # on each step) keeps the index stable if anything else appends mid-walk.
     history_view: list[HistoryRecord] | None = None
     history_index: int = 0
+    # Floating HEAD captured on entering history mode so Esc can restore it
+    # to exactly where the user came from. ``None`` iff ``mode != "history"``.
+    history_entry_ref: Reference | None = None
+    history_entry_offset: int = 0
 
 
 @dataclass
@@ -268,13 +272,41 @@ class App:
         return self._pad_to_height([header, *body_lines, sep, footer])
 
     def _filtered_chapters(self) -> list[tuple[ChapterEntry, object]]:
+        # Sort by (-prefix_count, tier, book_id, span, chapter, label_length).
+        # ``prefix_count`` (how many whitespace-split query tokens prefix-match
+        # label tokens) leads, so a query like "1 ne 1" puts every 1 Nephi
+        # chapter (count 3) ahead of 1 Chronicles 1 (count 2) — even though
+        # 1 Chronicles is in the user's current volume. After that, ``tier``
+        # groups remaining matches: current book → current volume → other.
+        # Within a tier, books appear in canonical order, then ``span`` orders
+        # chapters inside a single book (so "15" in 1 Nephi puts ch 15 — span
+        # 1 — ahead of ch 5 — span 8).
         index = self.db.chapter_index()
+        current_book_id = self.study.top_ref.book_id
+        current_volume_id = self.db.book_by_id(current_book_id).volume_id
+
+        def tier(book_id: int) -> int:
+            if book_id == current_book_id:
+                return 0
+            if self.db.book_by_id(book_id).volume_id == current_volume_id:
+                return 1
+            return 2
+
         scored: list[tuple[ChapterEntry, object]] = []
         for entry in index:
             s = score(self.goto.query, entry.label)
             if s is not None:
                 scored.append((entry, s))
-        scored.sort(key=lambda t: (t[1], t[0].book_id, t[0].chapter_number))  # type: ignore[arg-type]
+        scored.sort(  # type: ignore[arg-type]
+            key=lambda t: (
+                -prefix_match_count(self.goto.query, t[0].label),
+                tier(t[0].book_id),
+                t[0].book_id,
+                t[1].span,
+                t[0].chapter_number,
+                t[1].label_length,
+            )
+        )
         return scored
 
     def _render_goto(self) -> list[str]:
@@ -406,7 +438,7 @@ class App:
             self.goto = GotoState()
         elif key == "b":
             self.screen = "switcher"
-            self.switcher = SwitcherState()
+            self.switcher = SwitcherState(selected=self._default_switcher_selection())
         elif key == "q":
             self.quitting = True
         elif key == ":":
@@ -426,23 +458,51 @@ class App:
         return self.history.append(self.bookmark.slug, target)
 
     def _enter_history_mode(self) -> None:
-        """Commit current HEAD, snapshot history, step back by one."""
-        self._commit_history()
+        """Snapshot history, remember the floating HEAD, and step back one
+        record. We do not commit on entry, and the walk itself is purely
+        visual — the journal is only touched on settle. Esc restores the
+        floating HEAD from ``history_entry_ref`` without any persistence.
+        """
         snapshot = self.history.load_for(self.bookmark.slug)
-        if len(snapshot) < 2:
+        if not snapshot:
             self.flash = "no earlier history"
             return
+        if self.study.top_ref == snapshot[-1].reference:
+            # HEAD coincides with the most recent record; step back goes to
+            # the one before it.
+            if len(snapshot) < 2:
+                self.flash = "no earlier history"
+                return
+            target_index = len(snapshot) - 2
+        else:
+            # HEAD is floating (scrolled past the last commit); first step
+            # lands on the most recent record.
+            target_index = len(snapshot) - 1
+        self.study.history_entry_ref = self.study.top_ref
+        self.study.history_entry_offset = self.study.top_line_offset
         self.study.history_view = snapshot
-        self.study.history_index = len(snapshot) - 2
-        self._set_top(snapshot[self.study.history_index].reference)
+        self.study.history_index = target_index
+        self._set_top_visual(snapshot[target_index].reference)
         self.study.mode = "history"
 
     def _exit_history_mode(self, *, commit: bool) -> None:
         if commit:
             self._commit_history()
+            # Persist the settled position once, on transition out.
+            self._set_top_with_offset(
+                self.study.top_ref, self.study.top_line_offset
+            )
+        else:
+            # Esc cancels the walk: restore the floating HEAD we came from.
+            # The journal was never touched during the walk, so no persist.
+            entry_ref = self.study.history_entry_ref
+            if entry_ref is not None:
+                self._set_top_visual(entry_ref, self.study.history_entry_offset)
         self.study.mode = "normal"
         self.study.history_view = None
         self.study.history_index = 0
+        self.study.history_entry_ref = None
+        self.study.history_entry_offset = 0
 
     def _on_key_study_history(self, key: str) -> None:
         view = self.study.history_view
@@ -451,11 +511,11 @@ class App:
             return
         if key in ("left", "h"):
             self.study.history_index = max(0, self.study.history_index - 1)
-            self._set_top(view[self.study.history_index].reference)
+            self._set_top_visual(view[self.study.history_index].reference)
             return
         if key in ("right", "l"):
             self.study.history_index = min(len(view) - 1, self.study.history_index + 1)
-            self._set_top(view[self.study.history_index].reference)
+            self._set_top_visual(view[self.study.history_index].reference)
             return
         if key == "enter":
             self._exit_history_mode(commit=True)
@@ -614,6 +674,13 @@ class App:
         # Persist only the verse, not the offset.
         self.bookmark = self.journal.touch(self.bookmark.slug, ref)
 
+    def _set_top_visual(self, ref: Reference, offset: int = 0) -> None:
+        """Update the on-screen cursor without persisting. Used during a
+        transient history walk where commits happen only on settle.
+        """
+        self.study.top_ref = ref
+        self.study.top_line_offset = offset
+
     # goto handlers
 
     def _on_key_goto(self, key: str) -> None:
@@ -654,6 +721,16 @@ class App:
             self.goto.selected = 0
 
     # switcher handlers
+
+    def _default_switcher_selection(self) -> int:
+        # Default to the most recent bookmark that isn't the active one, so
+        # b+Enter behaves like Alt+Tab — switching to the previously used
+        # bookmark. With only one bookmark, fall back to 0.
+        bookmarks = self.journal.load()
+        for i, bm in enumerate(bookmarks):
+            if bm.slug != self.bookmark.slug:
+                return i
+        return 0
 
     def _on_key_switcher(self, key: str) -> None:
         bookmarks = self.journal.load()

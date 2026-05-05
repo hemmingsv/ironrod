@@ -249,9 +249,11 @@ def test_eternal_scroll_into_next_chapter(db: ScriptureDB, app: App) -> None:
 # verse jump
 
 def test_verse_jump_within_chapter(app: App) -> None:
-    # Move to start of 1 Nephi 1 first via goto.
+    # Move to start of 1 Nephi 1 first via goto. Use the full book name so
+    # the query is unambiguous from Genesis (otherwise tiered ordering picks
+    # a same-volume match like 1 Chronicles 1 ahead of cross-volume 1 Nephi).
     app.on_key("g")
-    for ch in "1 ne 1":
+    for ch in "1 nephi 1":
         app.on_key(ch)
     app.on_key("enter")
     assert app.screen == "study"
@@ -381,6 +383,49 @@ def test_goto_ctrl_n_and_ctrl_p_navigate_selection(app: App) -> None:
     app.on_key("ctrl-p")
     assert app.goto.selected == 0
 
+    
+def test_goto_prefers_current_book_on_score_tie(app: App, db: ScriptureDB) -> None:
+    # Typing "j" matches Job, Jude, Joel, James, Jacob, John, etc. With the
+    # cursor in 2 Nephi (Book of Mormon), Jacob (also BoM) should rank above
+    # Job/James/etc — same-volume tier wins on score ties.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("j")
+    titles = [entry.label for entry, _ in app._filtered_chapters()]
+    jacob_pos = next(i for i, t in enumerate(titles) if t.startswith("Jacob "))
+    job_pos = next(i for i, t in enumerate(titles) if t.startswith("Job "))
+    assert jacob_pos < job_pos
+
+
+def test_goto_numeric_selects_current_book_chapter(app: App, db: ScriptureDB) -> None:
+    # A bare number works as a chapter selector for the current book — it's
+    # the natural consequence of preferring same-book chapters on score ties.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("5")
+    app.on_key("enter")
+    assert app.study.top_ref.book_id == nephi2
+    assert app.study.top_ref.chapter_number == 5
+
+
+def test_goto_same_volume_ranks_above_other_volumes(app: App, db: ScriptureDB) -> None:
+    # In 2 Nephi (BoM), typing "1" should put BoM chapters ahead of OT/NT
+    # chapters with the same fuzzy score.
+    nephi2 = _book_id(db, "2 Nephi")
+    app.study.top_ref = Reference(book_id=nephi2, chapter_number=15, verse_number=1)
+    app.on_key("g")
+    app.on_key("1")
+    chapters = app._filtered_chapters()
+    bom_id = db.book_by_id(nephi2).volume_id
+    # Walk the list until we find an entry outside the current book; that
+    # entry should still belong to the same volume (Book of Mormon).
+    first_other_book = next(
+        entry for entry, _ in chapters if entry.book_id != nephi2
+    )
+    assert db.book_by_id(first_other_book.book_id).volume_id == bom_id
+
 
 # switcher
 
@@ -405,6 +450,42 @@ def test_switcher_select_other_moves_to_top(app: App, db: ScriptureDB) -> None:
     assert app.bookmark.slug == "my-study"
     assert app.journal.top().slug == "my-study"
     assert app.study.top_ref == app.bookmark.reference  # Gen 1:1
+
+
+def test_switcher_default_selects_previous_bookmark(app: App, db: ScriptureDB) -> None:
+    # b+Enter behaves like Alt+Tab: when the active bookmark sits at the top
+    # of the list, the default selection lands on the next-most-recent one,
+    # so Enter immediately switches back to the previous bookmark.
+    nephi = _book_id(db, "1 Nephi")
+    app.journal.create("Evening", Reference(book_id=nephi, chapter_number=3, verse_number=7))
+    # Switch to Evening so it's the active bookmark and sits at the top.
+    app.on_key("b")
+    app.on_key("enter")
+    assert app.bookmark.slug == "evening"
+    assert app.journal.load()[0].slug == "evening"
+    # Now b should default to my-study (index 1, the previous bookmark).
+    app.on_key("b")
+    assert app.switcher.selected == 1
+    app.on_key("enter")
+    assert app.bookmark.slug == "my-study"
+
+
+def test_switcher_default_with_only_one_bookmark_is_zero(app: App) -> None:
+    # Single bookmark — default selection has nowhere else to go.
+    app.on_key("b")
+    assert app.switcher.selected == 0
+
+
+def test_switcher_default_skips_active_when_active_not_at_top(
+    app: App, db: ScriptureDB,
+) -> None:
+    # Edge case: active bookmark isn't at index 0 (e.g. another bookmark was
+    # just created). Default should still skip the active one.
+    nephi = _book_id(db, "1 Nephi")
+    app.journal.create("Evening", Reference(book_id=nephi, chapter_number=3, verse_number=7))
+    # bookmarks = [evening, my-study], active = my-study (still at index 1).
+    app.on_key("b")
+    assert app.switcher.selected == 0  # evening, the first non-active entry
 
 
 def test_switcher_creates_new_at_gen_1_1(app: App) -> None:
@@ -654,7 +735,7 @@ def test_enter_in_history_mode_settles_and_exits(app: App) -> None:
     assert refs == [INITIAL_REF, a, initial]
 
 
-def test_escape_in_history_mode_exits_without_committing(app: App) -> None:
+def test_escape_in_history_mode_returns_to_floating_head(app: App) -> None:
     initial = app.study.top_ref
     for _ in range(60):
         app.on_key("j")
@@ -664,10 +745,58 @@ def test_escape_in_history_mode_exits_without_committing(app: App) -> None:
     app.on_key("enter")
     app.on_key("left")
     assert app.study.mode == "history"
+    assert app.study.top_ref == initial  # walked back visually
+    # The walk does not persist — bookmark on disk still points at the entry.
+    assert app.journal.get(app.bookmark.slug).reference == a
     before = list(_refs(app))
     app.on_key("escape")
     assert app.study.mode == "normal"
-    assert _refs(app) == before  # no commit
+    assert app.study.top_ref == a  # HEAD restored to entry position
+    assert _refs(app) == before  # history untouched
+    assert app.journal.get(app.bookmark.slug).reference == a  # journal unchanged
+
+
+def test_escape_from_floating_head_restores_without_editing_history(
+    app: App,
+) -> None:
+    """HEAD scrolled past the last commit (floating). ← enters history mode
+    without recording the floating position; Esc returns to it; history is
+    unchanged throughout.
+    """
+    initial = app.study.top_ref
+    for _ in range(60):
+        app.on_key("j")
+        if app.study.top_ref != initial:
+            break
+    a = app.study.top_ref
+    app.on_key("enter")  # commits a → [INITIAL_REF, a]
+    # Scroll past `a` without committing — HEAD is now floating.
+    for _ in range(60):
+        app.on_key("j")
+        if app.study.top_ref != a:
+            break
+    floating = app.study.top_ref
+    assert floating != a
+    history_before = list(_refs(app))
+    assert history_before == [INITIAL_REF, a]
+    journal_before = app.journal.get(app.bookmark.slug).reference
+    assert journal_before == floating
+    app.on_key("left")
+    assert app.study.mode == "history"
+    # First step from a floating HEAD lands on the most recent record.
+    assert app.study.top_ref == a
+    # Entry alone does not write to history or to the bookmark journal.
+    assert _refs(app) == history_before
+    assert app.journal.get(app.bookmark.slug).reference == floating
+    app.on_key("left")
+    assert app.study.top_ref == INITIAL_REF
+    # Walking does not persist either.
+    assert app.journal.get(app.bookmark.slug).reference == floating
+    app.on_key("escape")
+    assert app.study.mode == "normal"
+    assert app.study.top_ref == floating  # restored
+    assert _refs(app) == history_before  # history still untouched
+    assert app.journal.get(app.bookmark.slug).reference == floating
 
 
 def test_scroll_in_history_mode_exits_with_commit_then_scrolls(app: App) -> None:
