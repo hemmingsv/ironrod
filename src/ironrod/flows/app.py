@@ -34,6 +34,8 @@ SPECIAL_KEYS = {
     Keys.Enter: "enter",
     Keys.ControlJ: "enter",
     Keys.ControlM: "enter",
+    Keys.ControlN: "ctrl-n",
+    Keys.ControlP: "ctrl-p",
     Keys.Backspace: "backspace",
     Keys.Escape: "escape",
 }

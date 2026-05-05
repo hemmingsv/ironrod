@@ -370,6 +370,20 @@ def test_goto_escape_cancels(app: App) -> None:
     assert app.study.top_ref == original
 
 
+def test_goto_ctrl_n_and_ctrl_p_navigate_selection(app: App) -> None:
+    app.on_key("g")
+    assert app.goto.selected == 0
+    app.on_key("ctrl-n")
+    assert app.goto.selected == 1
+    app.on_key("ctrl-n")
+    assert app.goto.selected == 2
+    app.on_key("ctrl-p")
+    assert app.goto.selected == 1
+    app.on_key("ctrl-p")
+    app.on_key("ctrl-p")
+    assert app.goto.selected == 0
+
+    
 def test_goto_prefers_current_book_on_score_tie(app: App, db: ScriptureDB) -> None:
     # Typing "j" matches Job, Jude, Joel, James, Jacob, John, etc. With the
     # cursor in 2 Nephi (Book of Mormon), Jacob (also BoM) should rank above
@@ -511,6 +525,16 @@ def test_switcher_j_k_navigate_selection(app: App) -> None:
     app.on_key("j")
     assert app.switcher.selected == 1
     app.on_key("k")
+    assert app.switcher.selected == 0
+
+
+def test_switcher_ctrl_n_ctrl_p_navigate_selection(app: App) -> None:
+    app.journal.create("Evening", Reference(book_id=1, chapter_number=2, verse_number=1))
+    app.on_key("b")
+    assert app.switcher.selected == 0
+    app.on_key("ctrl-n")
+    assert app.switcher.selected == 1
+    app.on_key("ctrl-p")
     assert app.switcher.selected == 0
 
 
