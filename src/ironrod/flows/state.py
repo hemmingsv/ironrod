@@ -64,12 +64,13 @@ HELP_LINES: tuple[str, ...] = (
     "Goto chapter (after pressing g)",
     "  type      fuzzy-filter the list       Bksp      delete char",
     "  ↑ / ↓     select                      Enter     jump        Esc   cancel",
+    "  Ctrl-n / Ctrl-p also select (down / up)",
     "",
     "Bookmarks (after pressing b)",
     "  j / k     select                      Enter     switch to selected",
     "  c         create new bookmark         d         delete current bookmark",
     "  ?         this help                   Esc       back to study",
-    "  ↑ / ↓ also select",
+    "  ↑ / ↓ also select; Ctrl-n / Ctrl-p also select (down / up)",
     "",
     "New bookmark (after pressing c in bookmarks)",
     "  type      enter a name                Bksp      delete char",
@@ -636,10 +637,10 @@ class App:
             self._commit_history(target)
             self._reset_read_cursor()
             return
-        if key in ("up",):
+        if key in ("up", "ctrl-p"):
             self.goto.selected = max(0, self.goto.selected - 1)
             return
-        if key in ("down",):
+        if key in ("down", "ctrl-n"):
             scored = self._filtered_chapters()
             limit = max(0, len(scored) - 1)
             self.goto.selected = min(limit, self.goto.selected + 1)
@@ -685,10 +686,10 @@ class App:
         if key == "?":
             self._open_help()
             return
-        if key in ("up", "k"):
+        if key in ("up", "k", "ctrl-p"):
             self.switcher.selected = max(0, self.switcher.selected - 1)
             return
-        if key in ("down", "j"):
+        if key in ("down", "j", "ctrl-n"):
             self.switcher.selected = min(max(0, len(bookmarks) - 1), self.switcher.selected + 1)
             return
         if key == "enter":
