@@ -5,6 +5,8 @@ Doctrine and Covenants, Pearl of Great Price). It opens directly on the verse
 you last read, scrolls line by line through the entire canon, and saves your
 position on every keystroke.
 
+![ironrod screenshot](docs/screenshot.png)
+
 ## Install
 
 Without cloning the repo, you can simply run:
